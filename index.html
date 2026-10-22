@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LIVE EARTH // ORBITAL COMMAND</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%2300e5ff' stroke-width='2'/><circle cx='16' cy='16' r='5' fill='%2300e5ff'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="css/style.css?v=6">
+</head>
+<body>
+
+<!-- 3D globe / 2D map surfaces -->
+<canvas id="globe-canvas"></canvas>
+<div id="map2d"></div>
+
+<!-- top bar -->
+<header id="topbar">
+  <div id="logo"><i>◉</i> LIVE EARTH</div>
+  <div id="clocks">
+    <span id="clock-utc">--:--:-- UTC</span>
+    <span id="clock-local">--:-- LOCAL</span>
+  </div>
+  <span id="sim-badge" class="hidden">⏱ SIM TIME</span>
+  <span id="demo-badge" class="hidden">DEMO DATA</span>
+  <div id="search-wrap">
+    <input id="search-input" type="text" placeholder="search location or keyword…" autocomplete="off">
+    <button class="tb-btn" id="btn-fly">FLY</button>
+    <button class="tb-btn" id="btn-news-search">NEWS</button>
+  </div>
+  <button class="tb-btn" id="btn-mode">2D MAP</button>
+  <button class="tb-btn" id="btn-settings" title="Settings">⚙</button>
+  <button class="tb-btn" id="btn-help">?</button>
+  <button class="tb-btn" id="btn-full">⛶</button>
+</header>
+
+<!-- left control panel -->
+<aside class="panel collapsed" id="left-panel">
+  <div class="panel-head">LAYERS <button data-collapse="#left-panel">◀</button></div>
+  <div class="panel-body">
+    <div id="layers-list"></div>
+    <div class="sec-title">NEWS FILTERS</div>
+    <div class="chip-wrap" id="cat-chips"></div>
+    <div class="sec-title">SATELLITE GROUPS</div>
+    <div class="chip-wrap" id="sat-chips"></div>
+    <div class="sec-title">BASEMAP · 2D SURFACE</div>
+    <div class="chip-wrap" id="basemap-chips"></div>
+    <div class="sec-title">QUICK OPS</div>
+    <button class="action-btn" id="btn-iss">⌖ FIND ISS</button>
+    <button class="action-btn" id="btn-refresh">⟳ REFRESH FEEDS</button>
+  </div>
+</aside>
+<button class="panel-tab" id="left-tab" data-collapse="#left-panel">LAYERS</button>
+
+<!-- right feed panel -->
+<aside class="panel collapsed" id="right-panel">
+  <div class="panel-head">LIVE FEED <button data-collapse="#right-panel">▶</button></div>
+  <div class="panel-body" id="feed"></div>
+</aside>
+<button class="panel-tab" id="right-tab" data-collapse="#right-panel">FEED</button>
+
+<!-- albanian panel -->
+<aside class="panel collapsed" id="albanian-panel">
+  <div class="panel-head">ALBANIAN <button data-collapse="#albanian-panel">▶</button></div>
+  <div class="panel-body" id="albanian-body">
+    <button class="action-btn" id="btn-albanian-go" style="width:100%;">OPEN ALBANIAN NEWS</button>
+  </div>
+</aside>
+<button class="panel-tab" id="albanian-tab" data-collapse="#albanian-panel">ALBANIAN</button>
+
+<!-- custom confirmation modal -->
+<div id="confirm-modal" class="hidden">
+  <div id="confirm-box">
+    <div id="confirm-title">Confirm</div>
+    <div id="confirm-message"></div>
+    <div class="confirm-buttons">
+      <button id="confirm-yes" class="action-btn">YES</button>
+      <button id="confirm-no" class="action-btn">NO</button>
+    </div>
+  </div>
+</div>
+
+<!-- live TV dock -->
+<div id="tv-dock">
+  <div id="tv-dock-label">LIVE CHANNELS</div>
+  <div id="tv-regions"></div>
+  <div id="tv-dock-list"></div>
+</div>
+
+<!-- time warp -->
+<div id="timewarp" title="Drags the sun terminator + satellite orbits through time">
+  <span class="tw-label">⏱ TIME WARP</span>
+  <input type="range" id="tw-range" min="-48" max="48" step="0.5" value="0">
+  <b id="tw-read">+0.0h</b>
+  <button id="tw-reset" title="Back to live time">LIVE</button>
+</div>
+
+<!-- settings modal -->
+<div id="settings-modal" class="hidden">
+  <div id="settings-box">
+    <button id="settings-close">✕</button>
+    <h2>⚙ COMMAND SETTINGS</h2>
+    <div id="settings-body"></div>
+  </div>
+</div>
+
+<!-- city labels overlay (3D mode) -->
+<div id="city-labels"></div>
+
+<!-- city intel dossier -->
+<div id="city-card" class="hidden">
+  <button id="citycard-close">✕</button>
+  <div id="citycard-name">—</div>
+  <div id="citycard-sub">—</div>
+  <div id="citycard-data">—</div>
+  <div id="citycard-wiki"></div>
+  <div class="row">
+    <button class="action-btn" id="citycard-news">◈ NEWS HERE</button>
+    <a class="action-btn" id="citycard-wikilink" href="#" target="_blank" rel="noopener">WIKI ↗</a>
+  </div>
+</div>
+
+<!-- satellite card -->
+<div id="sat-card" class="hidden">
+  <button id="satcard-close">✕</button>
+  <div id="satcard-name">—</div>
+  <div id="satcard-data">—</div>
+  <div class="row"><button class="action-btn" id="satcard-fly">⌖ CENTER ON TARGET</button></div>
+</div>
+
+<!-- anchored popup card -->
+<div id="popup" class="hidden">
+  <button id="popup-close">✕</button>
+  <div id="popup-body"></div>
+</div>
+
+<!-- ticker + status bar -->
+<div id="ticker-wrap">
+  <div id="ticker-label">◉ WIRE</div>
+  <div id="ticker-clip"><div id="ticker"></div></div>
+</div>
+<div id="statusbar">
+  <span class="src off" id="src-gdelt">NEWSNET</span>
+  <span class="src off" id="src-usgs">USGS</span>
+  <span class="src off" id="src-celestrak">CELESTRAK</span>
+  <span class="src off" id="src-opensky">OPENSKY</span>
+  <span class="right">
+    <span>KP <span id="kp-val" title="Planetary K-index — enable AURORA layer">–</span></span>
+    <span>MARKERS <span id="count-markers">0</span></span>
+    <span>FPS <span id="fps">--</span></span>
+  </span>
+</div>
+
+<!-- floating TV players land here -->
+<div id="players"></div>
+<div id="toast-wrap"></div>
+
+<!-- help modal -->
+<div id="help-modal" class="hidden">
+  <div id="help-box">
+    <button id="help-close">✕</button>
+    <h2>◉ LIVE EARTH — FIELD MANUAL</h2>
+    <p>A real-time 3D command center: world news, earthquakes, satellites, air traffic and live TV on a photoreal globe with a true day/night terminator.</p>
+    <h3>HOTKEYS</h3>
+    <ul>
+      <li><kbd>N</kbd> news events &nbsp; <kbd>Q</kbd> earthquakes &nbsp; <kbd>S</kbd> satellites &nbsp; <kbd>T</kbd> TV pins &nbsp; <kbd>F</kbd> air traffic</li>
+      <li><kbd>U</kbd> cities &nbsp; <kbd>A</kbd> aurora oval &nbsp; <kbd>W</kbd> rain radar (2D) &nbsp; <kbd>C</kbd> clouds &nbsp; <kbd>L</kbd> night lights</li>
+      <li><kbd>B</kbd> borders &nbsp; <kbd>R</kbd> auto-rotate &nbsp; <kbd>I</kbd> click intel &nbsp; <kbd>M</kbd> 2D map &nbsp; <kbd>?</kbd> manual &nbsp; <kbd>ESC</kbd> close</li>
+    </ul>
+    <h3>MOUSE</h3>
+    <ul>
+      <li>Drag to rotate · scroll to zoom · click a marker for details</li>
+      <li>Click a city dot or label for a full live dossier: local time, weather, air quality, Wikipedia brief</li>
+      <li>Click open ocean/land for surface weather intel (toggleable)</li>
+      <li>Click a satellite dot to select it and see its orbit trail</li>
+    </ul>
+    <h3>DATA SOURCES (all free, no keys)</h3>
+    <ul>
+      <li>News: GDELT Project GEO 2.0 (updated ~15 min)</li>
+      <li>Earthquakes: USGS 24h feed · Satellites: CelesTrak TLE + SGP4</li>
+      <li>Air traffic: OpenSky Network (anonymous, rate-limited)</li>
+      <li>Aurora + Kp: NOAA SWPC OVATION · Rain radar: RainViewer</li>
+      <li>Weather/air quality: Open-Meteo · City briefs: Wikipedia · Markets: CoinGecko</li>
+    </ul>
+    <p style="margin-top:10px;color:var(--dim)">If a source is unreachable you'll see amber DEMO indicators — the app never breaks, it degrades to demo data.</p>
+  </div>
+</div>
+
+<!-- boot overlay -->
+<div id="boot">
+  <div id="boot-logo"><i>◉</i> LIVE EARTH</div>
+  <div id="boot-sub">ORBITAL COMMAND INTERFACE v1.0</div>
+  <div id="boot-lines"></div>
+  <div id="boot-bar"><div id="boot-bar-fill"></div></div>
+  <div id="boot-skip">CLICK ANYWHERE TO SKIP</div>
+</div>
+
+<!-- CDN libraries (classic scripts so file:// double-click works) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- app -->
+<script src="js/config.js?v=6"></script>
+<script src="js/demo-data.js?v=6"></script>
+<script src="js/cities.js?v=6"></script>
+<script src="js/globe.js?v=6"></script>
+<script src="js/layers.js?v=6"></script>
+<script src="js/ui.js?v=8"></script>
+<script src="js/app.js?v=6"></script>
+</body>
+</html>

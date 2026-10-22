@@ -1,0 +1,2389 @@
+<!DOCTYPE html>
+<html lang="sq">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LAJME // Albanian News Feed</title>
+
+  <!--
+  ╔══════════════════════════════════════════════════════════════════════════════╗
+  ║  LAJME — Albanian News Aggregator                                           ║
+  ║  ──────────────────────────────────────────────────────────────────────────  ║
+  ║  Data flow:                                                                 ║
+  ║    Albanian news site RSS feeds                                             ║
+  ║      → rss2json.com free API (converts XML→JSON, handles CORS)             ║
+  ║        → rendered as channel posts in this UI                              ║
+  ║                                                                             ║
+  ║  RSS→JSON proxy: https://api.rss2json.com/v1/api.json?rss_url={url}       ║
+  ║  No API key required for normal usage. Response shape:                     ║
+  ║    { status, feed: { title, link, image }, items: [ {...} ] }              ║
+  ║  Item shape:                                                                ║
+  ║    { title, link, pubDate, author, thumbnail, description, content }       ║
+  ║                                                                             ║
+  ║  Albanian sources used (all have public /feed RSS endpoints):              ║
+  ║    news24.al      — General news, largest Albanian outlet                  ║
+  ║    vizionplus.tv  — Vizion Plus TV channel                                  ║
+  ║    oranews.tv     — Ora News TV                                             ║
+  ║    shqiptarja.com — Independent journalism                                  ║
+  ║    shekulli.com.al— Shekulli newspaper                                     ║
+  ║    lajme.al       — Lajme news portal                                       ║
+  ║    scan-tv.com    — Scan TV (economics/business)                            ║
+  ║    bota.al        — Bota.al (culture & diaspora)                            ║
+  ╚══════════════════════════════════════════════════════════════════════════════╝
+  -->
+
+  <!-- Fonts: Exo 2 (headers, strong geometric feel) + IBM Plex Mono (data/meta) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── TOKENS ── */
+    :root {
+      --void: #050608; --base: #090b10; --surface: #0e1219;
+      --card: #0e1219; --card-h: #131825;
+      --sidebar-bg: #07090f;
+      --red: #e8402a; --red-dim: #8a2515; --red-glow: rgba(232,64,42,0.25);
+      --orange: #f07030; --gold: #d4a820;
+      --cyan: #28c8d8; --green: #30d48a;
+      --t1: #eceef5; --t2: #8090aa; --t3: #3a4460;
+      --b1: rgba(232,64,42,0.12); --b2: rgba(232,64,42,0.28); --b3: rgba(232,64,42,0.55);
+      --sw: 230px; --rw: 256px;
+      --fhead: 'Exo 2', sans-serif; --fmono: 'IBM Plex Mono', monospace;
+    }
+
+    /* ── RESET ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { background: var(--void); color: var(--t1); font-family: var(--fmono); font-size: 13px; -webkit-font-smoothing: antialiased; }
+    a { color: var(--red); text-decoration: none; }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--red-dim); border-radius: 2px; }
+
+    /* ── BG GRID ── */
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: linear-gradient(rgba(232,64,42,0.03) 1px,transparent 1px), linear-gradient(90deg,rgba(232,64,42,0.03) 1px,transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* ══════════════════════════════
+       LAYOUT — sidebar + main + rsb
+       The ONLY layout rule: 3 columns side by side, each independently scrolls.
+       No nested flex/grid height chains.
+    ══════════════════════════════ */
+    #app {
+      position: relative; z-index: 1;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* LEFT SIDEBAR — fixed width, full height, internal scroll */
+    #sidebar {
+      width: var(--sw);
+      flex-shrink: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--b1);
+      overflow: hidden;
+    }
+    #brand {
+      height: 54px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px; padding: 0 16px;
+      border-bottom: 1px solid var(--b1);
+    }
+    .eagle-icon { width: 28px; height: 28px; filter: drop-shadow(0 0 6px var(--red)); }
+    .brand-text { font-family: var(--fhead); font-size: 20px; font-weight: 800; letter-spacing: 4px; color: var(--red); text-shadow: 0 0 20px var(--red-glow); }
+    .brand-sub  { font-size: 9px; letter-spacing: 1.5px; color: var(--t3); text-transform: uppercase; margin-top: 1px; }
+    #sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: 8px; }
+    #sidebar-footer { flex-shrink: 0; border-top: 1px solid var(--b1); padding: 12px 14px; display: flex; align-items: center; gap: 8px; background: var(--sidebar-bg); }
+    .user-pip  { width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg,var(--red-dim),var(--red)); display: flex; align-items: center; justify-content: center; font-family: var(--fhead); font-size: 14px; font-weight: 800; color: #fff; }
+    .user-name { font-size: 12px; color: var(--t1); }
+    .user-tag  { font-size: 9px; color: var(--t3); }
+
+    /* Sidebar channel items */
+    .sec-label { padding: 14px 14px 4px; font-family: var(--fhead); font-size: 9px; font-weight: 600; letter-spacing: 2.5px; color: var(--t3); text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+    .sec-label::after { content: ''; flex: 1; height: 1px; background: var(--b1); }
+    .ch { display: flex; align-items: center; gap: 9px; padding: 8px 10px 8px 12px; margin: 1px 8px; border-radius: 6px; cursor: pointer; color: var(--t2); font-size: 12px; border: 1px solid transparent; transition: all .15s; position: relative; overflow: hidden; }
+    .ch:hover { background: rgba(232,64,42,0.05); color: var(--t1); }
+    .ch.active { background: rgba(232,64,42,0.08); color: var(--red); border-color: var(--b2); }
+    .ch.active::before { content: ''; position: absolute; left: 0; top: 20%; bottom: 20%; width: 2px; background: var(--red); border-radius: 0 2px 2px 0; box-shadow: 0 0 8px var(--red); }
+    .ch-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .ch-badge { margin-left: auto; background: var(--red); color: #fff; font-family: var(--fhead); font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 7px; min-width: 18px; text-align: center; }
+    .ch-badge.loading { background: var(--b2); color: transparent; animation: shimmer 1.5s infinite; }
+    .ch[data-key^="rtsh"].active { color: var(--gold); border-color: rgba(212,168,32,0.35); background: rgba(212,168,32,0.07); }
+    .ch[data-key^="rtsh"].active::before { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+
+    /* MAIN — takes remaining width, scrolls internally */
+    #main {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--base);
+      overflow: hidden;
+    }
+
+    /* Topbar — fixed 54px, 3 sections: left | centre | right */
+    #topbar {
+      height: 54px;
+      flex-shrink: 0;
+      padding: 0 18px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      border-bottom: 1px solid var(--b1);
+      background: rgba(7,9,15,0.95);
+      backdrop-filter: blur(12px);
+      z-index: 5;
+    }
+    .tb-left  { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .tb-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .tb-channel-icon { font-size: 17px; flex-shrink: 0; }
+    .tb-channel-name { font-family: var(--fhead); font-size: 17px; font-weight: 700; letter-spacing: 1.5px; color: var(--t1); white-space: nowrap; }
+    .tb-div  { width: 1px; height: 18px; background: var(--b2); flex-shrink: 0; }
+    .tb-desc { font-size: 11px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+    .live-badge { display: flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid rgba(232,64,42,0.35); border-radius: 3px; font-family: var(--fhead); font-size: 10px; font-weight: 700; letter-spacing: 2px; color: var(--red); background: rgba(232,64,42,0.06); }
+    .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--red); animation: pulse 1.5s infinite; }
+    .view-toggle { display: flex; border: 1px solid var(--b1); border-radius: 6px; overflow: hidden; }
+    .vt-btn { padding: 5px 10px; background: transparent; border: none; color: var(--t3); cursor: pointer; font-size: 13px; transition: all .15s; border-right: 1px solid var(--b1); }
+    .vt-btn:last-child { border-right: none; }
+    .vt-btn.active { background: rgba(232,64,42,0.1); color: var(--red); }
+    .vt-btn:hover:not(.active) { color: var(--t1); }
+    .tb-btn { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--b1); background: transparent; color: var(--t2); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: all .15s; }
+    .tb-btn:hover { border-color: var(--b3); color: var(--red); background: rgba(232,64,42,0.06); }
+
+    /* ── Centre platform badge ── */
+    .tb-center {
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .platform-badge {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 12px;
+      border: 1px solid var(--b1);
+      border-radius: 20px;
+      background: rgba(255,255,255,0.03);
+      font-family: var(--fhead); font-size: 10px; font-weight: 600;
+      letter-spacing: 1.5px; color: var(--t2);
+      text-transform: uppercase; white-space: nowrap;
+      transition: border-color .2s, color .2s;
+    }
+    .platform-badge.pc     { border-color: rgba(40,200,216,0.3); color: var(--cyan); background: rgba(40,200,216,0.05); }
+    .platform-badge.android{ border-color: rgba(48,212,138,0.3); color: var(--green); background: rgba(48,212,138,0.05); }
+    .platform-badge.ios    { border-color: rgba(232,64,42,0.3); color: var(--orange); background: rgba(232,64,42,0.05); }
+
+    /* ── Auto-refresh clickable timer ── */
+    #auto-refresh-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      border: 1px solid var(--b1);
+      border-radius: 5px;
+      background: transparent;
+      color: var(--t2);
+      font-family: var(--fmono); font-size: 10px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all .2s;
+      white-space: nowrap;
+    }
+    #auto-refresh-btn:hover {
+      border-color: var(--green);
+      color: var(--green);
+      background: rgba(48,212,138,0.07);
+    }
+    #auto-refresh-btn:hover .ar-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    #auto-refresh-btn.refreshing {
+      border-color: var(--red); color: var(--red);
+      background: rgba(232,64,42,0.08);
+      animation: pulse-btn .5s ease;
+    }
+    .ar-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--t3); flex-shrink: 0;
+      transition: background .2s, box-shadow .2s;
+    }
+    .ar-dot.active { background: var(--green); box-shadow: 0 0 5px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse-btn { 0%{transform:scale(1)} 50%{transform:scale(1.04)} 100%{transform:scale(1)} }
+
+    /* ── Article count ── */
+    .tb-count-wrap { font-size: 11px; color: var(--t2); white-space: nowrap; }
+    .tb-count-wrap #tb-count { color: var(--red); font-weight: 600; }
+
+    /* FEED — takes remaining height, SCROLLS */
+    #feed {
+      flex: 1;
+      min-height: 0;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      padding: 20px 24px 40px;
+    }
+
+    /* Feed date separator */
+    .feed-sep { column-span: all; display: flex; align-items: center; gap: 12px; padding: 4px 0 16px; color: var(--t3); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+    .feed-sep::before, .feed-sep::after { content: ''; flex: 1; height: 1px; background: var(--b1); }
+
+    /* ══════════════════════════════════════════════════════════
+       NEWS CARDS
+       Key insight: cards live in a CSS column layout, NOT a grid.
+       Each column flows independently — no row-height alignment.
+       Cards grow to their natural height. Images are NEVER squished.
+    ══════════════════════════════════════════════════════════ */
+
+    /* Grid mode = 2 CSS columns */
+    #feed.view-grid {
+      columns: 2;
+      column-gap: 20px;
+    }
+    /* List mode = normal block flow */
+    #feed.view-list {
+      columns: 1;
+    }
+
+    .news-card {
+      break-inside: avoid;          /* never split a card across columns */
+      display: block;
+      background: var(--card);
+      border: 1px solid var(--b1);
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: pointer;
+      margin-bottom: 20px;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .news-card:hover { border-color: var(--b2); box-shadow: 0 6px 24px rgba(0,0,0,0.5); }
+
+    /* IMAGE — block element, fixed height, never squished */
+    .card-img-wrap {
+      display: block;
+      width: 100%;
+      height: 220px;
+      overflow: hidden;
+      background: #111520;
+    }
+    .card-img {
+      display: block;
+      width: 100%;
+      height: 220px;
+      object-fit: cover;
+    }
+    .card-img-placeholder {
+      display: flex;
+      width: 100%;
+      height: 160px;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      background: linear-gradient(135deg, rgba(232,64,42,0.08), rgba(9,11,16,0.95));
+      color: rgba(232,64,42,0.2);
+    }
+
+    /* Source bar */
+    .card-source-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px 4px; }
+    .card-source-dot  { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .card-source-name { font-family: var(--fhead); font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+    .card-date { margin-left: auto; font-size: 10px; color: var(--t3); white-space: nowrap; }
+
+    /* Body */
+    .card-body { padding: 6px 14px 12px; }
+    .card-title { font-family: var(--fhead); font-size: 15px; font-weight: 700; line-height: 1.35; color: var(--t1); margin-bottom: 7px; }
+    .card-title:hover { color: var(--red); }
+    .card-desc  { font-size: 12px; color: var(--t2); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+    /* Footer */
+    .card-footer { padding: 9px 14px; border-top: 1px solid var(--b1); display: flex; align-items: center; gap: 10px; }
+    .card-author { font-size: 10px; color: var(--t3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-link-btn { padding: 5px 12px; border: 1px solid var(--b2); border-radius: 4px; background: rgba(232,64,42,0.06); color: var(--red); font-family: var(--fhead); font-size: 10px; font-weight: 600; letter-spacing: 1.5px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .card-link-btn:hover { background: rgba(232,64,42,0.18); border-color: var(--b3); }
+
+    /* List view overrides — wide image on left */
+    #feed.view-list .news-card    { display: flex; align-items: stretch; margin-bottom: 12px; }
+    #feed.view-list .card-img-wrap { width: 220px; min-width: 220px; height: 150px; flex-shrink: 0; }
+    #feed.view-list .card-img      { height: 150px; }
+    #feed.view-list .card-img-placeholder { width: 220px; height: 150px; font-size: 32px; }
+    #feed.view-list .card-body     { padding: 8px 14px; flex: 1; min-width: 0; }
+    #feed.view-list .card-title    { font-size: 14px; -webkit-line-clamp: 2; }
+    #feed.view-list .card-footer   { display: none; }
+
+    /* Skeletons */
+    .skel-card { break-inside: avoid; display: block; background: var(--card); border: 1px solid var(--b1); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+    .skel { display: block; background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.03) 75%); background-size: 200%; animation: shimmer 1.6s infinite; border-radius: 3px; }
+    .sk-img  { height: 220px; width: 100%; }
+    .sk-body { padding: 14px; }
+    .sk-a { height: 9px; width: 35%; margin-bottom: 10px; }
+    .sk-b { height: 16px; width: 90%; margin-bottom: 5px; }
+    .sk-c { height: 16px; width: 70%; margin-bottom: 12px; }
+    .sk-d { height: 9px; width: 50%; }
+
+    /* Error/empty state */
+    .state-box { padding: 80px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; color: var(--t2); }
+    .state-icon  { font-size: 40px; opacity: .35; }
+    .state-title { font-family: var(--fhead); font-size: 15px; letter-spacing: 2px; }
+    .state-sub   { font-size: 11px; color: var(--t3); }
+    .retry-btn   { margin-top: 10px; padding: 8px 24px; border: 1px solid var(--b3); border-radius: 5px; background: rgba(232,64,42,0.08); color: var(--red); font-family: var(--fhead); font-size: 12px; letter-spacing: 2px; cursor: pointer; }
+    .retry-btn:hover { background: rgba(232,64,42,0.18); }
+
+    /* RIGHT SIDEBAR */
+    #rsb { width: var(--rw); flex-shrink: 0; height: 100vh; display: flex; flex-direction: column; background: var(--sidebar-bg); border-left: 1px solid var(--b1); overflow: hidden; }
+    #rsb-header { height: 54px; padding: 0 14px; display: flex; align-items: center; border-bottom: 1px solid var(--b1); flex-shrink: 0; font-family: var(--fhead); font-size: 10px; font-weight: 600; letter-spacing: 2.5px; color: var(--t3); text-transform: uppercase; }
+    #rsb-body { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
+    .widget { background: rgba(232,64,42,0.025); border: 1px solid var(--b1); border-radius: 7px; padding: 12px; margin-bottom: 12px; }
+    .wgt-title { font-family: var(--fhead); font-size: 9px; font-weight: 700; letter-spacing: 2.5px; color: var(--t3); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .wgt-title::after { content: ''; flex: 1; height: 1px; background: var(--b1); }
+    .src-stat { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--b1); }
+    .src-stat:last-child { border: none; }
+    .src-stat-dot  { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .src-stat-name { flex: 1; font-size: 11px; color: var(--t2); }
+    .src-stat-num  { font-family: var(--fhead); font-size: 13px; font-weight: 600; color: var(--red); }
+    .headline-item { padding: 8px 0; border-bottom: 1px solid var(--b1); cursor: pointer; transition: color .15s; }
+    .headline-item:last-child { border: none; }
+    .headline-item:hover .hl-title { color: var(--red); }
+    .hl-source { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--t3); margin-bottom: 3px; }
+    .hl-title  { font-family: var(--fhead); font-size: 12px; font-weight: 600; color: var(--t2); line-height: 1.35; }
+    .al-map-wrap { padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .al-flag     { width: 48px; height: 32px; border-radius: 3px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex; }
+    .al-flag-red { flex: 1; background: #d40000; display: flex; align-items: center; justify-content: center; }
+    .flag-text   { font-size: 9px; color: var(--t3); letter-spacing: 1px; }
+
+    /* KEYFRAMES */
+    @keyframes pulse   { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.75)} }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    @keyframes fadein  { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+    @keyframes badge-pop { 0%{transform:scale(0)} 70%{transform:scale(1.2)} 100%{transform:scale(1)} }
+
+    /* ── LIVE TV styles ── */
+    .live-ch { position: relative; }
+    .live-ch:hover { background: rgba(232,64,42,0.1) !important; }
+    .live-tag {
+      margin-left: auto;
+      font-family: var(--fhead); font-size: 8px; font-weight: 800;
+      letter-spacing: 1.5px; padding: 2px 6px; border-radius: 3px;
+      border: 1px solid rgba(232,64,42,0.5); color: var(--red);
+      background: rgba(232,64,42,0.1);
+      animation: live-pulse 2s infinite;
+    }
+    @keyframes live-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .live-dot-pulse { animation: pulse 1.5s infinite; }
+
+    /* ── Live TV Modal overlay ── */
+    #live-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 500;
+      background: rgba(0,0,0,0.92);
+      backdrop-filter: blur(12px);
+      flex-direction: column;
+    }
+    #live-overlay.open { display: flex; }
+
+    #live-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--b1);
+      background: rgba(7,9,15,0.98);
+      flex-shrink: 0;
+    }
+    #live-title {
+      font-family: var(--fhead); font-size: 15px; font-weight: 700;
+      letter-spacing: 2px; color: var(--t1); display: flex; align-items: center; gap: 8px;
+    }
+    #live-title .live-pip {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+      box-shadow: 0 0 8px var(--red); animation: pulse 1s infinite;
+    }
+    #live-ch-name { font-size: 12px; color: var(--t2); margin-left: 4px; }
+
+    /* Channel switcher tabs */
+    #live-tabs {
+      display: flex; gap: 4px; flex: 1; flex-wrap: wrap;
+      overflow: hidden;
+    }
+    .live-tab {
+      padding: 5px 12px; border-radius: 5px;
+      border: 1px solid var(--b1); background: transparent;
+      color: var(--t2); font-family: var(--fhead); font-size: 10px;
+      font-weight: 600; letter-spacing: 1px; cursor: pointer;
+      transition: all .15s; white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .live-tab:hover { border-color: var(--b2); color: var(--t1); }
+    .live-tab.active { background: rgba(232,64,42,0.12); border-color: var(--b3); color: var(--red); }
+
+    #live-close {
+      width: 34px; height: 34px; border-radius: 8px;
+      border: 1px solid var(--b2); background: rgba(232,64,42,0.06);
+      color: var(--red); cursor: pointer; font-size: 18px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .15s;
+    }
+    #live-close:hover { background: rgba(232,64,42,0.2); }
+
+    /* Video + sidebar layout */
+    #live-body {
+      flex: 1; min-height: 0; display: flex; gap: 0;
+    }
+    #live-player-wrap {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      background: #000; position: relative;
+    }
+    #live-iframe {
+      width: 100%; flex: 1; min-height: 0; border: none; background: #000;
+    }
+    #live-loading {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      background: #050608; color: var(--t2);
+    }
+    .live-spinner {
+      width: 36px; height: 36px; border: 3px solid var(--b1);
+      border-top-color: var(--red); border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #live-loading p { font-family: var(--fhead); font-size: 11px; letter-spacing: 2px; color: var(--t3); }
+
+    /* Related channels sidebar */
+    #live-side {
+      width: 200px; flex-shrink: 0; border-left: 1px solid var(--b1);
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--sidebar-bg);
+    }
+    #live-side-title {
+      font-family: var(--fhead); font-size: 9px; font-weight: 600;
+      letter-spacing: 2px; color: var(--t3); text-transform: uppercase;
+      padding: 10px 12px 6px; border-bottom: 1px solid var(--b1); flex-shrink: 0;
+    }
+    #live-side-list { flex: 1; overflow-y: auto; padding: 6px; }
+    .live-side-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 10px; border-radius: 6px; cursor: pointer;
+      margin-bottom: 2px; transition: background .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .live-side-item:hover { background: rgba(232,64,42,0.07); }
+    .live-side-item.active { background: rgba(232,64,42,0.1); }
+    .live-side-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; animation: pulse 2s infinite; }
+    .live-side-name { font-family: var(--fhead); font-size: 11px; font-weight: 600; color: var(--t1); }
+    .live-side-desc { font-size: 9px; color: var(--t3); margin-top: 1px; }
+    .live-side-live { font-family: var(--fhead); font-size: 8px; color: var(--red); margin-left: auto; letter-spacing: 1px; }
+
+    /* Mobile: hide live sidebar, full-width player */
+    @media (max-width: 680px) {
+      #live-side { display: none; }
+      #live-tabs { gap: 3px; }
+      .live-tab { font-size: 9px; padding: 4px 8px; }
+      #live-header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+    }
+    @media (max-width: 960px) {
+      :root { --rw: 0px; }
+      #rsb { display: none; }
+    }
+
+    /* ══ MOBILE ══ */
+    @media (max-width: 680px) {
+      :root { --sw: 0px; }
+      #sidebar { display: none; }
+      #app  { height: 100dvh; }
+      #main { height: 100dvh; }
+
+      /* Topbar: stack into 2 compact rows */
+      #topbar {
+        height: auto;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 8px 12px 6px;
+        gap: 6px;
+      }
+
+      /* Row 1: icon + channel name + platform badge */
+      .tb-left {
+        display: flex; align-items: center; gap: 8px;
+        min-width: 0; flex: 1;
+      }
+      .tb-channel-name { font-size: 14px; letter-spacing: 0.5px; }
+      .tb-div  { display: none; }
+      .tb-desc { display: none; }
+
+      /* Platform badge in row 1 — smaller */
+      .tb-center { margin-left: auto; flex-shrink: 0; }
+      .platform-badge { font-size: 9px; padding: 3px 8px; letter-spacing: 1px; }
+
+      /* Row 2: auto-refresh + LIVE + count + source picker + view toggle */
+      .tb-right {
+        display: flex; align-items: center; gap: 6px;
+        flex-wrap: nowrap; overflow: hidden;
+      }
+
+      #auto-refresh-btn {
+        font-size: 9px; padding: 3px 8px; letter-spacing: 0.5px;
+        flex-shrink: 0;
+      }
+      .live-badge { font-size: 9px; padding: 2px 7px; letter-spacing: 1.5px; flex-shrink: 0; }
+      .tb-count-wrap { font-size: 10px; flex-shrink: 0; }
+
+      /* Hide desktop refresh button on mobile (we have the auto-refresh btn) */
+      .tb-btn { display: none; }
+
+      /* Source picker button */
+      #mob-source-btn {
+        display: flex; align-items: center; gap: 5px;
+        padding: 4px 10px;
+        background: rgba(232,64,42,0.08); border: 1px solid var(--b2);
+        border-radius: 6px; color: var(--red);
+        font-family: var(--fhead); font-size: 10px; font-weight: 700; letter-spacing: 1px;
+        cursor: pointer; flex: 1; max-width: 150px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #mob-source-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--red); box-shadow: 0 0 4px var(--red); }
+
+      .view-toggle { flex-shrink: 0; }
+      .vt-btn { padding: 4px 9px; font-size: 13px; }
+
+      /* Feed — account for taller 2-row topbar (~90px) + bottom nav (60px) */
+      #feed { padding: 12px 10px 80px; }
+      #feed.view-grid { columns: 1; }
+
+      /* Cards */
+      .news-card { margin-bottom: 14px; border-radius: 12px; }
+      .card-img-wrap { height: 210px; }
+      .card-img      { height: 210px; }
+      .card-img-placeholder { height: 210px; font-size: 44px; }
+      .sk-img        { height: 210px; }
+      .card-title    { font-size: 16px; line-height: 1.4; }
+      .card-desc     { font-size: 12px; -webkit-line-clamp: 2; }
+      .card-source-bar { padding: 10px 14px 2px; }
+      .card-body     { padding: 6px 14px 12px; }
+      .card-footer   { padding: 9px 14px; }
+      .card-link-btn { padding: 6px 14px; font-size: 11px; }
+
+      /* List view on mobile */
+      #feed.view-list .news-card { height: 120px; margin-bottom: 10px; }
+      #feed.view-list .card-img-wrap { width: 150px; min-width: 150px; height: 120px; }
+      #feed.view-list .card-img      { height: 120px; }
+      #feed.view-list .card-img-placeholder { width: 150px; height: 120px; font-size: 28px; }
+      #feed.view-list .card-title { font-size: 13px; }
+      #feed.view-list .card-desc  { -webkit-line-clamp: 2; font-size: 11px; }
+      #feed.view-list .card-footer { display: none; }
+
+      /* Bottom nav */
+      #mob-nav {
+        display: flex; position: fixed; bottom: 0; left: 0; right: 0; height: 58px;
+        background: rgba(5,6,8,0.97); border-top: 1px solid var(--b1);
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+        z-index: 200; align-items: stretch; padding: 0 6px; gap: 2px;
+        safe-area-inset-bottom: env(safe-area-inset-bottom);
+      }
+      .mob-nav-btn {
+        flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 3px; background: transparent; border: none; color: var(--t3);
+        cursor: pointer; border-radius: 8px; font-family: var(--fmono); padding: 4px;
+        -webkit-tap-highlight-color: transparent; transition: color .15s, background .15s;
+        min-width: 0;
+      }
+      .mob-nav-btn:active, .mob-nav-btn.active { color: var(--red); background: rgba(232,64,42,0.08); }
+      .mob-nav-icon  { font-size: 19px; line-height: 1; }
+      .mob-nav-label { font-size: 8px; letter-spacing: 0.8px; text-transform: uppercase; white-space: nowrap; }
+
+      /* Drawer */
+      #mob-drawer {
+        display: flex; position: fixed; bottom: 0; left: 0; right: 0; height: 82dvh;
+        background: var(--sidebar-bg); border-top: 1px solid var(--b2);
+        border-radius: 20px 20px 0 0; z-index: 300;
+        transform: translateY(100%); transition: transform .3s cubic-bezier(.4,0,.2,1);
+        flex-direction: column; overflow: hidden;
+        box-shadow: 0 -12px 50px rgba(0,0,0,0.7);
+      }
+      #mob-drawer.open { transform: translateY(0); }
+      #mob-drawer-handle {
+        flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+        padding: 10px 16px 8px; border-bottom: 1px solid var(--b1); gap: 8px;
+      }
+      .drawer-pill  { width: 36px; height: 4px; background: var(--t3); border-radius: 2px; opacity: .4; }
+      .drawer-title { font-family: var(--fhead); font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--t1); text-transform: uppercase; align-self: flex-start; }
+      #mob-drawer-scroll { flex: 1; overflow-y: auto; padding: 6px 10px 20px; -webkit-overflow-scrolling: touch; }
+      #mob-drawer .ch       { padding: 12px 14px; margin: 2px 0; font-size: 14px; border-radius: 10px; }
+      #mob-drawer .ch-dot   { width: 10px; height: 10px; }
+      #mob-drawer .ch-badge { font-size: 10px; padding: 2px 7px; }
+      #mob-drawer .sec-label { font-size: 9px; padding: 12px 6px 4px; }
+
+      /* Backdrop */
+      #mob-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 299; backdrop-filter: blur(3px); display: none; }
+      #mob-backdrop.visible { display: block; }
+
+      /* New article toast — above bottom nav */
+      #new-toast { position: fixed !important; bottom: 68px !important; top: unset !important; left: 10px; right: 10px; margin: 0; z-index: 250; }
+    }
+
+    /* Desktop: hide mobile-only elements */
+    @media (min-width: 681px) {
+      #mob-nav, #mob-drawer, #mob-backdrop, #mob-source-btn { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══════════════════════════ LEFT SIDEBAR ═══════════════════════════ -->
+  <nav id="sidebar">
+
+    <!-- Brand / logo -->
+    <div id="brand">
+      <!-- Albanian double-headed eagle (simplified SVG) -->
+      <svg class="eagle-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 4 C16 4 12 7 11 11 C9 8 5 8 4 12 C3 15 5 18 8 19 C6 21 5 24 7 26 C9 28 12 28 14 26 C14 29 16 32 20 34 C24 32 26 29 26 26 C28 28 31 28 33 26 C35 24 34 21 32 19 C35 18 37 15 36 12 C35 8 31 8 29 11 C28 7 24 4 20 4Z" fill="#e8402a"/>
+        <circle cx="16" cy="13" r="1.5" fill="#050608"/>
+        <circle cx="24" cy="13" r="1.5" fill="#050608"/>
+      </svg>
+      <div>
+        <div class="brand-text">LAJME</div>
+        <div class="brand-sub">Albanian News Feed</div>
+      </div>
+    </div>
+
+    <!-- ── Channel list — ALL SOURCES ──────────────── -->
+  <div id="sidebar-scroll">
+
+    <!-- "ALL" — aggregated feed from multiple sources simultaneously -->
+    <div class="sec-label">Të gjitha burimet</div>
+    <div class="ch active" data-key="all" data-dot="#e8402a" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e8402a;box-shadow:0 0 5px #e8402a;"></span>
+      🇦🇱 të gjitha
+      <span class="ch-badge" id="badge-all">—</span>
+    </div>
+
+    <!-- General News -->
+    <div class="sec-label" style="margin-top:6px;">Lajme të Përgjithshme</div>
+    <div class="ch" data-key="news24" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#2288ee;"></span>news24.al
+      <span class="ch-badge loading" id="badge-news24">·</span>
+    </div>
+    <div class="ch" data-key="ora" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#dd8822;"></span>ora news
+      <span class="ch-badge loading" id="badge-ora">·</span>
+    </div>
+    <div class="ch" data-key="shqiptarja" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#cc3366;"></span>shqiptarja.com
+      <span class="ch-badge loading" id="badge-shqiptarja">·</span>
+    </div>
+    <div class="ch" data-key="shekulli" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#8844ee;"></span>shekulli
+      <span class="ch-badge loading" id="badge-shekulli">·</span>
+    </div>
+    <div class="ch" data-key="lajme" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#ee4444;"></span>lajme.al
+      <span class="ch-badge loading" id="badge-lajme">·</span>
+    </div>
+    <div class="ch" data-key="panorama" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e07020;"></span>panorama
+      <span class="ch-badge loading" id="badge-panorama">·</span>
+    </div>
+    <div class="ch" data-key="gazeta_shqip" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#c0392b;"></span>gazeta shqip
+      <span class="ch-badge loading" id="badge-gazeta_shqip">·</span>
+    </div>
+    <div class="ch" data-key="tema" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#1a7abf;"></span>gazeta tema
+      <span class="ch-badge loading" id="badge-tema">·</span>
+    </div>
+    <div class="ch" data-key="Reporter" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#27ae60;"></span>reporter.al
+      <span class="ch-badge loading" id="badge-Reporter">·</span>
+    </div>
+    <div class="ch" data-key="exit" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#9b59b6;"></span>exit news · EN
+      <span class="ch-badge loading" id="badge-exit">·</span>
+    </div>
+    <div class="ch" data-key="syri" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#16a085;"></span>syri.net
+      <span class="ch-badge loading" id="badge-syri">·</span>
+    </div>
+    <div class="ch" data-key="dosja" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#d35400;"></span>dosja.al
+      <span class="ch-badge loading" id="badge-dosja">·</span>
+    </div>
+    <div class="ch" data-key="abcnews_al" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#3498db;"></span>abc news al
+      <span class="ch-badge loading" id="badge-abcnews_al">·</span>
+    </div>
+    <div class="ch" data-key="bota" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#aa8833;"></span>bota.al
+      <span class="ch-badge loading" id="badge-bota">·</span>
+    </div>
+
+    <!-- TV Channels -->
+    <div class="sec-label" style="margin-top:6px;">Kanale TV</div>
+    <div class="ch" data-key="vizion" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#22cc88;"></span>vizion plus
+      <span class="ch-badge loading" id="badge-vizion">·</span>
+    </div>
+    <div class="ch" data-key="top_channel" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e74c3c;"></span>top channel
+      <span class="ch-badge loading" id="badge-top_channel">·</span>
+    </div>
+    <div class="ch" data-key="klan" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e91e63;"></span>tv klan
+      <span class="ch-badge loading" id="badge-klan">·</span>
+    </div>
+    <div class="ch" data-key="A2CNN" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#cc0000;"></span>a2 cnn albania
+      <span class="ch-badge loading" id="badge-A2CNN">·</span>
+    </div>
+    <div class="ch" data-key="scan" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#22aacc;"></span>scan tv · ekonomi
+      <span class="ch-badge loading" id="badge-scan">·</span>
+    </div>
+
+    <!-- RTSH Section -->
+    <div class="sec-label" style="margin-top:6px;color:var(--gold);">
+      <span style="color:var(--gold);">🏛</span> RTSH — Publik
+    </div>
+    <div class="ch" data-key="rtsh" onclick="switchSource(this)" style="border-color:rgba(212,168,32,0.15);">
+      <span class="ch-dot" style="background:#d4a820;box-shadow:0 0 5px rgba(212,168,32,0.5);"></span>rtsh lajme
+      <span class="ch-badge loading" id="badge-rtsh" style="background:rgba(212,168,32,0.8);">·</span>
+    </div>
+    <div class="ch" data-key="rtsh_sport" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#f39c12;"></span>rtsh sport
+      <span class="ch-badge loading" id="badge-rtsh_sport">·</span>
+    </div>
+    <div class="ch" data-key="rtsh_kulture" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e8b84b;"></span>rtsh kulturë
+      <span class="ch-badge loading" id="badge-rtsh_kulture">·</span>
+    </div>
+    <div class="ch" data-key="rtsh_ekonomi" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#c9a227;"></span>rtsh ekonomi
+      <span class="ch-badge loading" id="badge-rtsh_ekonomi">·</span>
+    </div>
+
+    <!-- Specialised -->
+    <div class="sec-label" style="margin-top:6px;">Specialised</div>
+    <div class="ch" data-key="telegrafi" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#2980b9;"></span>telegrafi · kosovë
+      <span class="ch-badge loading" id="badge-telegrafi">·</span>
+    </div>
+    <div class="ch" data-key="kallxo" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#8e44ad;"></span>kallxo · kosovë
+      <span class="ch-badge loading" id="badge-kallxo">·</span>
+    </div>
+    <div class="ch" data-key="koha" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#e67e22;"></span>koha.net · kosovë
+      <span class="ch-badge loading" id="badge-koha">·</span>
+    </div>
+    <div class="ch" data-key="zeri" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#c0392b;"></span>zëri · kosovë
+      <span class="ch-badge loading" id="badge-zeri">·</span>
+    </div>
+    <div class="ch" data-key="sport_shqiperi" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#27ae60;"></span>sport shqipëri
+      <span class="ch-badge loading" id="badge-sport_shqiperi">·</span>
+    </div>
+    <div class="ch" data-key="supersport_al" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#1a9e3f;"></span>supersport.al
+      <span class="ch-badge loading" id="badge-supersport_al">·</span>
+    </div>
+    <div class="ch" data-key="ekonomia_online" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#1abc9c;"></span>ekonomia online
+      <span class="ch-badge loading" id="badge-ekonomia_online">·</span>
+    </div>
+    <div class="ch" data-key="monitor" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#16a085;"></span>monitor.al
+      <span class="ch-badge loading" id="badge-monitor">·</span>
+    </div>
+    <div class="ch" data-key="fashionblog_al" onclick="switchSource(this)">
+      <span class="ch-dot" style="background:#7f8c8d;"></span>balkan insight · EN
+      <span class="ch-badge loading" id="badge-fashionblog_al">·</span>
+    </div>
+
+    <!-- ── LIVE TV ──────────────────────────────────── -->
+    <div class="sec-label" style="margin-top:8px;color:#e8402a;">📺 Kanale LIVE</div>
+    <div class="ch live-ch" onclick="openLiveTV('vizion_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#22cc88;"></span>Vizion Plus
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('top_channel_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#e74c3c;"></span>Top Channel
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('klan_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#e91e63;"></span>TV Klan
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('rtsh_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#d4a820;"></span>RTSH 1
+      <span class="live-tag" style="border-color:rgba(212,168,32,0.5);color:#d4a820;">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('ora_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#dd8822;"></span>Ora News
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('news24_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#2288ee;"></span>News24
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('a2cnn_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#cc0000;"></span>A2 CNN
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('abc_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#3498db;"></span>ABC News Al
+      <span class="live-tag">LIVE</span>
+    </div>
+    <div class="ch live-ch" onclick="openLiveTV('euronews_al_live')">
+      <span class="ch-dot live-dot-pulse" style="background:#003399;"></span>Euronews AL
+      <span class="live-tag">LIVE</span>
+    </div>
+
+  </div><!-- /#sidebar-scroll -->
+
+    <div id="sidebar-footer">
+      <div class="user-pip">SH</div>
+      <div>
+        <div class="user-name">shqiptari</div>
+        <div class="user-tag">lexues#001</div>
+      </div>
+    </div>
+  </nav>
+
+
+  <!-- ═══════════════════════════ MAIN CONTENT ═══════════════════════════ -->
+  <main id="main">
+
+    <!-- Topbar -->
+    <header id="topbar">
+      <div class="tb-left">
+        <span class="tb-channel-icon" id="tb-icon">🇦🇱</span>
+        <span class="tb-channel-name" id="tb-name">të gjitha lajmet</span>
+        <div class="tb-div"></div>
+        <span class="tb-desc" id="tb-desc">Lajmet kryesore nga të gjitha burimet shqiptare</span>
+      </div>
+
+      <!-- Centre: platform version badge -->
+      <div class="tb-center">
+        <div class="platform-badge" id="platform-badge">
+          <span id="platform-icon">🖥</span>
+          <span id="platform-label">Versioni PC</span>
+        </div>
+      </div>
+
+      <div class="tb-right">
+        <!-- Clickable auto-refresh timer — left of LIVE -->
+        <button id="auto-refresh-btn" onclick="refreshFeed()" title="Kliko për të rifreskuar tani">
+          <span class="ar-dot"></span>
+          <span id="ar-label">AUTO 5:00</span>
+        </button>
+
+        <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+        <span class="tb-count-wrap" id="tb-count-wrap">
+          <span id="tb-count">—</span> artikuj
+        </span>
+
+        <!-- Mobile: source picker (hidden desktop) -->
+        <button id="mob-source-btn" onclick="openDrawer()">
+          <span id="mob-source-dot"></span>
+          <span id="mob-source-label">të gjitha</span>
+          <span style="margin-left:auto;opacity:.5;">▾</span>
+        </button>
+
+        <!-- View toggles -->
+        <div class="view-toggle">
+          <button class="vt-btn active" id="vt-grid" title="Grid view" onclick="setView('grid')">⊞</button>
+          <button class="vt-btn"        id="vt-list" title="List view"  onclick="setView('list')">☰</button>
+        </div>
+
+        <button class="tb-btn" title="Refresh" onclick="refreshFeed()">↺</button>
+      </div>
+    </header>
+
+    <!-- Feed -->
+    <section id="feed" class="view-grid">
+      <!-- Cards injected by JS -->
+    </section>
+  </main>
+
+
+  <!-- ═══════════════════════════ RIGHT SIDEBAR ═══════════════════════════ -->
+  <aside id="rsb">
+    <div id="rsb-header">Analitikë</div><!-- "Analytics" in Albanian -->
+
+    <div id="rsb-body">
+
+      <!-- Source breakdown widget -->
+      <div class="widget">
+        <div class="wgt-title">Burimet</div>
+        <div id="rsb-sources">
+          <div style="font-size:11px;color:var(--t3);">Duke ngarkuar...</div>
+        </div>
+      </div>
+
+      <!-- Breaking headlines from current feed -->
+      <div class="widget">
+        <div class="wgt-title">Titujt Kryesorë</div>
+        <div id="rsb-headlines">
+          <div style="font-size:11px;color:var(--t3);">Duke ngarkuar...</div>
+        </div>
+      </div>
+
+      <!-- Albanian flag decoration -->
+      <div class="al-map-wrap">
+        <div class="al-flag">
+          <div class="al-flag-red">
+            <!-- Minimal eagle silhouette -->
+            <svg width="28" height="22" viewBox="0 0 40 32" fill="black" xmlns="http://www.w3.org/2000/svg">
+              <path d="M20 3 C17 3 13 6 12 9 C10 7 7 7 6 10 C5 13 7 15 9 16 C8 18 7 21 9 23 C11 25 14 24 15 22 C15 25 17 28 20 29 C23 28 25 25 25 22 C26 24 29 25 31 23 C33 21 32 18 31 16 C33 15 35 13 34 10 C33 7 30 7 28 9 C27 6 23 3 20 3Z"/>
+            </svg>
+          </div>
+        </div>
+        <div class="flag-text">REPUBLIKA E SHQIPËRISË</div>
+      </div>
+
+    </div>
+  </aside>
+
+</div><!-- /#app -->
+
+<!-- ═══════════════ LIVE TV OVERLAY ═══════════════ -->
+<div id="live-overlay">
+  <div id="live-header">
+    <div id="live-title">
+      <span class="live-pip"></span>
+      📺 LIVE TV —
+      <span id="live-ch-name">Vizion Plus</span>
+    </div>
+
+    <!-- Channel quick-switch tabs -->
+    <div id="live-tabs">
+      <button class="live-tab active" onclick="switchLive('vizion_live',this)">Vizion+</button>
+      <button class="live-tab" onclick="switchLive('top_channel_live',this)">Top Channel</button>
+      <button class="live-tab" onclick="switchLive('klan_live',this)">TV Klan</button>
+      <button class="live-tab" onclick="switchLive('rtsh_live',this)">RTSH 1</button>
+      <button class="live-tab" onclick="switchLive('ora_live',this)">Ora News</button>
+      <button class="live-tab" onclick="switchLive('news24_live',this)">News24</button>
+      <button class="live-tab" onclick="switchLive('a2cnn_live',this)">A2 CNN</button>
+      <button class="live-tab" onclick="switchLive('abc_live',this)">ABC Al</button>
+      <button class="live-tab" onclick="switchLive('euronews_al_live',this)">Euronews</button>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <button id="live-open-btn" title="Hap në tab të ri" onclick="openLiveInNewTab()"
+        style="padding:4px 10px;border:1px solid var(--b2);border-radius:4px;background:rgba(232,64,42,0.08);color:var(--t2);font-family:var(--fmono);font-size:10px;cursor:pointer;transition:all .15s;"
+        onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t2)'">
+        ↗ HAPE DIREKT
+      </button>
+      <button id="live-close" onclick="closeLiveTV()" title="Mbyll">✕</button>
+    </div>
+  </div>
+
+  <div id="live-body">
+    <!-- Main player -->
+    <div id="live-player-wrap">
+      <div id="live-loading">
+        <div class="live-spinner"></div>
+        <p>Duke ngarkuar transmetimin live...</p>
+      </div>
+      <iframe id="live-iframe" allowfullscreen allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    </div>
+
+    <!-- Channel list sidebar (desktop only) -->
+    <div id="live-side">
+      <div id="live-side-title">Kanale të tjera</div>
+      <div id="live-side-list">
+        <div class="live-side-item active" onclick="switchLive('vizion_live',null,'Vizion Plus')">
+          <div><div class="live-side-dot" style="background:#22cc88;"></div></div>
+          <div>
+            <div class="live-side-name">Vizion Plus</div>
+            <div class="live-side-desc">Lajme · Filma · Sport</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('top_channel_live',null,'Top Channel')">
+          <div>
+            <div class="live-side-dot" style="background:#e74c3c;"></div>
+          </div>
+          <div>
+            <div class="live-side-name">Top Channel</div>
+            <div class="live-side-desc">Lajme · Argëtim</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('klan_live',null,'TV Klan')">
+          <div><div class="live-side-dot" style="background:#e91e63;"></div></div>
+          <div>
+            <div class="live-side-name">TV Klan</div>
+            <div class="live-side-desc">Lajme · Sport · Shfaqje</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('rtsh_live',null,'RTSH 1')">
+          <div><div class="live-side-dot" style="background:#d4a820;"></div></div>
+          <div>
+            <div class="live-side-name">RTSH 1</div>
+            <div class="live-side-desc">Televizioni Publik</div>
+          </div>
+          <span class="live-side-live" style="color:#d4a820;">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('ora_live',null,'Ora News')">
+          <div><div class="live-side-dot" style="background:#dd8822;"></div></div>
+          <div>
+            <div class="live-side-name">Ora News</div>
+            <div class="live-side-desc">Lajme 24/7</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('news24_live',null,'News24 Albania')">
+          <div><div class="live-side-dot" style="background:#2288ee;"></div></div>
+          <div>
+            <div class="live-side-name">News24 Albania</div>
+            <div class="live-side-desc">Lajme Breaking</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('a2cnn_live',null,'A2 CNN Albania')">
+          <div><div class="live-side-dot" style="background:#cc0000;"></div></div>
+          <div>
+            <div class="live-side-name">A2 CNN Albania</div>
+            <div class="live-side-desc">Lajme · Debate</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('abc_live',null,'ABC News Albania')">
+          <div><div class="live-side-dot" style="background:#3498db;"></div></div>
+          <div>
+            <div class="live-side-name">ABC News Al</div>
+            <div class="live-side-desc">Lajme · Raportim</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+        <div class="live-side-item" onclick="switchLive('euronews_al_live',null,'Euronews Albania')">
+          <div><div class="live-side-dot" style="background:#003399;"></div></div>
+          <div>
+            <div class="live-side-name">Euronews AL</div>
+            <div class="live-side-desc">Ndërkombëtare · Shqip</div>
+          </div>
+          <span class="live-side-live">●LIVE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ MOBILE BOTTOM NAV ═══════════════ -->
+<nav id="mob-nav">
+  <button class="mob-nav-btn active" id="mob-btn-feed" onclick="mobNav('feed',this)">
+    <span class="mob-nav-icon">🗞</span>
+    <span class="mob-nav-label">Lajme</span>
+  </button>
+  <button class="mob-nav-btn" id="mob-btn-live" onclick="openLiveTV('top_channel_live');mobNav('live',this)">
+    <span class="mob-nav-icon">📺</span>
+    <span class="mob-nav-label" style="color:inherit;">LIVE TV</span>
+  </button>
+  <button class="mob-nav-btn" id="mob-btn-sources" onclick="openDrawer()">
+    <span class="mob-nav-icon">📡</span>
+    <span class="mob-nav-label">Burime</span>
+  </button>
+  <button class="mob-nav-btn" id="mob-btn-list" onclick="mobToggleView(this)">
+    <span class="mob-nav-icon" id="mob-view-icon">⊞</span>
+    <span class="mob-nav-label" id="mob-view-label">Grid</span>
+  </button>
+</nav>
+
+<!-- ═══════════════ MOBILE SOURCE DRAWER ═══════════════ -->
+<div id="mob-backdrop" onclick="closeDrawer()"></div>
+<div id="mob-drawer">
+  <div id="mob-drawer-handle">
+    <div class="drawer-pill"></div>
+    <div class="drawer-title">🇦🇱 Zgjidh Burimin</div>
+  </div>
+  <div id="mob-drawer-scroll">
+
+    <div class="sec-label">Të gjitha</div>
+    <div class="ch active" data-key="all" onclick="mobSwitchSource(this,'të gjitha','#e8402a')">
+      <span class="ch-dot" style="background:#e8402a;box-shadow:0 0 5px #e8402a;"></span>🇦🇱 të gjitha
+      <span class="ch-badge" id="mob-badge-all">—</span>
+    </div>
+
+    <div class="sec-label">Lajme të Përgjithshme</div>
+    <div class="ch" data-key="news24" onclick="mobSwitchSource(this,'news24.al','#2288ee')"><span class="ch-dot" style="background:#2288ee;"></span>news24.al<span class="ch-badge loading" id="mob-badge-news24">·</span></div>
+    <div class="ch" data-key="ora" onclick="mobSwitchSource(this,'ora news','#dd8822')"><span class="ch-dot" style="background:#dd8822;"></span>ora news<span class="ch-badge loading" id="mob-badge-ora">·</span></div>
+    <div class="ch" data-key="shqiptarja" onclick="mobSwitchSource(this,'shqiptarja','#cc3366')"><span class="ch-dot" style="background:#cc3366;"></span>shqiptarja.com<span class="ch-badge loading" id="mob-badge-shqiptarja">·</span></div>
+    <div class="ch" data-key="shekulli" onclick="mobSwitchSource(this,'shekulli','#8844ee')"><span class="ch-dot" style="background:#8844ee;"></span>shekulli<span class="ch-badge loading" id="mob-badge-shekulli">·</span></div>
+    <div class="ch" data-key="lajme" onclick="mobSwitchSource(this,'lajme.al','#ee4444')"><span class="ch-dot" style="background:#ee4444;"></span>lajme.al<span class="ch-badge loading" id="mob-badge-lajme">·</span></div>
+    <div class="ch" data-key="panorama" onclick="mobSwitchSource(this,'panorama','#e07020')"><span class="ch-dot" style="background:#e07020;"></span>panorama<span class="ch-badge loading" id="mob-badge-panorama">·</span></div>
+    <div class="ch" data-key="gazeta_shqip" onclick="mobSwitchSource(this,'gazeta shqip','#c0392b')"><span class="ch-dot" style="background:#c0392b;"></span>gazeta shqip<span class="ch-badge loading" id="mob-badge-gazeta_shqip">·</span></div>
+    <div class="ch" data-key="tema" onclick="mobSwitchSource(this,'gazeta tema','#1a7abf')"><span class="ch-dot" style="background:#1a7abf;"></span>gazeta tema<span class="ch-badge loading" id="mob-badge-tema">·</span></div>
+    <div class="ch" data-key="Reporter" onclick="mobSwitchSource(this,'reporter.al','#27ae60')"><span class="ch-dot" style="background:#27ae60;"></span>reporter.al<span class="ch-badge loading" id="mob-badge-Reporter">·</span></div>
+    <div class="ch" data-key="exit" onclick="mobSwitchSource(this,'exit news','#9b59b6')"><span class="ch-dot" style="background:#9b59b6;"></span>exit news · EN<span class="ch-badge loading" id="mob-badge-exit">·</span></div>
+    <div class="ch" data-key="syri" onclick="mobSwitchSource(this,'syri.net','#16a085')"><span class="ch-dot" style="background:#16a085;"></span>syri.net<span class="ch-badge loading" id="mob-badge-syri">·</span></div>
+    <div class="ch" data-key="dosja" onclick="mobSwitchSource(this,'dosja.al','#d35400')"><span class="ch-dot" style="background:#d35400;"></span>dosja.al<span class="ch-badge loading" id="mob-badge-dosja">·</span></div>
+    <div class="ch" data-key="abcnews_al" onclick="mobSwitchSource(this,'abc news al','#3498db')"><span class="ch-dot" style="background:#3498db;"></span>abc news al<span class="ch-badge loading" id="mob-badge-abcnews_al">·</span></div>
+    <div class="ch" data-key="bota" onclick="mobSwitchSource(this,'bota.al','#aa8833')"><span class="ch-dot" style="background:#aa8833;"></span>bota.al<span class="ch-badge loading" id="mob-badge-bota">·</span></div>
+
+    <div class="sec-label">Kanale TV</div>
+    <div class="ch" data-key="vizion" onclick="mobSwitchSource(this,'vizion plus','#22cc88')"><span class="ch-dot" style="background:#22cc88;"></span>vizion plus<span class="ch-badge loading" id="mob-badge-vizion">·</span></div>
+    <div class="ch" data-key="top_channel" onclick="mobSwitchSource(this,'top channel','#e74c3c')"><span class="ch-dot" style="background:#e74c3c;"></span>top channel<span class="ch-badge loading" id="mob-badge-top_channel">·</span></div>
+    <div class="ch" data-key="klan" onclick="mobSwitchSource(this,'tv klan','#e91e63')"><span class="ch-dot" style="background:#e91e63;"></span>tv klan<span class="ch-badge loading" id="mob-badge-klan">·</span></div>
+    <div class="ch" data-key="A2CNN" onclick="mobSwitchSource(this,'a2 cnn','#cc0000')"><span class="ch-dot" style="background:#cc0000;"></span>a2 cnn albania<span class="ch-badge loading" id="mob-badge-A2CNN">·</span></div>
+    <div class="ch" data-key="scan" onclick="mobSwitchSource(this,'scan tv','#22aacc')"><span class="ch-dot" style="background:#22aacc;"></span>scan tv · ekonomi<span class="ch-badge loading" id="mob-badge-scan">·</span></div>
+
+    <div class="sec-label" style="color:var(--gold);">🏛 RTSH — Publik</div>
+    <div class="ch" data-key="rtsh" onclick="mobSwitchSource(this,'rtsh lajme','#d4a820')"><span class="ch-dot" style="background:#d4a820;"></span>rtsh lajme<span class="ch-badge loading" id="mob-badge-rtsh">·</span></div>
+    <div class="ch" data-key="rtsh_sport" onclick="mobSwitchSource(this,'rtsh sport','#f39c12')"><span class="ch-dot" style="background:#f39c12;"></span>rtsh sport<span class="ch-badge loading" id="mob-badge-rtsh_sport">·</span></div>
+    <div class="ch" data-key="rtsh_kulture" onclick="mobSwitchSource(this,'rtsh kulturë','#e8b84b')"><span class="ch-dot" style="background:#e8b84b;"></span>rtsh kulturë<span class="ch-badge loading" id="mob-badge-rtsh_kulture">·</span></div>
+    <div class="ch" data-key="rtsh_ekonomi" onclick="mobSwitchSource(this,'rtsh ekonomi','#c9a227')"><span class="ch-dot" style="background:#c9a227;"></span>rtsh ekonomi<span class="ch-badge loading" id="mob-badge-rtsh_ekonomi">·</span></div>
+
+    <div class="sec-label">Specialised</div>
+    <div class="ch" data-key="telegrafi" onclick="mobSwitchSource(this,'telegrafi','#2980b9')"><span class="ch-dot" style="background:#2980b9;"></span>telegrafi · kosovë<span class="ch-badge loading" id="mob-badge-telegrafi">·</span></div>
+    <div class="ch" data-key="kallxo" onclick="mobSwitchSource(this,'kallxo','#8e44ad')"><span class="ch-dot" style="background:#8e44ad;"></span>kallxo · kosovë<span class="ch-badge loading" id="mob-badge-kallxo">·</span></div>
+    <div class="ch" data-key="koha" onclick="mobSwitchSource(this,'koha.net','#e67e22')"><span class="ch-dot" style="background:#e67e22;"></span>koha.net · kosovë<span class="ch-badge loading" id="mob-badge-koha">·</span></div>
+    <div class="ch" data-key="zeri" onclick="mobSwitchSource(this,'zëri','#c0392b')"><span class="ch-dot" style="background:#c0392b;"></span>zëri · kosovë<span class="ch-badge loading" id="mob-badge-zeri">·</span></div>
+    <div class="ch" data-key="sport_shqiperi" onclick="mobSwitchSource(this,'sport shqipëri','#27ae60')"><span class="ch-dot" style="background:#27ae60;"></span>sport shqipëri<span class="ch-badge loading" id="mob-badge-sport_shqiperi">·</span></div>
+    <div class="ch" data-key="supersport_al" onclick="mobSwitchSource(this,'supersport.al','#1a9e3f')"><span class="ch-dot" style="background:#1a9e3f;"></span>supersport.al<span class="ch-badge loading" id="mob-badge-supersport_al">·</span></div>
+    <div class="ch" data-key="ekonomia_online" onclick="mobSwitchSource(this,'ekonomia online','#1abc9c')"><span class="ch-dot" style="background:#1abc9c;"></span>ekonomia online<span class="ch-badge loading" id="mob-badge-ekonomia_online">·</span></div>
+    <div class="ch" data-key="monitor" onclick="mobSwitchSource(this,'monitor.al','#16a085')"><span class="ch-dot" style="background:#16a085;"></span>monitor.al<span class="ch-badge loading" id="mob-badge-monitor">·</span></div>
+    <div class="ch" data-key="fashionblog_al" onclick="mobSwitchSource(this,'balkan insight','#7f8c8d')"><span class="ch-dot" style="background:#7f8c8d;"></span>balkan insight · EN<span class="ch-badge loading" id="mob-badge-fashionblog_al">·</span></div>
+
+    <div class="sec-label" style="color:var(--red);margin-top:6px;">📺 Kanale LIVE</div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('vizion_live')"><span class="ch-dot live-dot-pulse" style="background:#22cc88;"></span>Vizion Plus<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('top_channel_live')"><span class="ch-dot live-dot-pulse" style="background:#e74c3c;"></span>Top Channel<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('klan_live')"><span class="ch-dot live-dot-pulse" style="background:#e91e63;"></span>TV Klan<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('rtsh_live')"><span class="ch-dot live-dot-pulse" style="background:#d4a820;"></span>RTSH 1<span class="live-tag" style="border-color:rgba(212,168,32,0.5);color:#d4a820;">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('ora_live')"><span class="ch-dot live-dot-pulse" style="background:#dd8822;"></span>Ora News<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('news24_live')"><span class="ch-dot live-dot-pulse" style="background:#2288ee;"></span>News24<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('a2cnn_live')"><span class="ch-dot live-dot-pulse" style="background:#cc0000;"></span>A2 CNN<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('abc_live')"><span class="ch-dot live-dot-pulse" style="background:#3498db;"></span>ABC News Al<span class="live-tag">LIVE</span></div>
+    <div class="ch live-ch" onclick="closeDrawer();openLiveTV('euronews_al_live')"><span class="ch-dot live-dot-pulse" style="background:#003399;"></span>Euronews AL<span class="live-tag">LIVE</span></div>
+
+  </div>
+</div>
+
+<script>
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * LAJME — Albanian News Aggregator Script
+ * ───────────────────────────────────────────────────────────────────────────
+ *
+ * Architecture:
+ *   1. SOURCES defines all Albanian news channels with their RSS feed URLs
+ *   2. fetchFeed() tries multiple RSS→JSON proxies in sequence until one works
+ *      — Multi-proxy fallback: rss2json → AllOrigins → rssbridge/public
+ *   3. loadSource() handles skeleton loading → fetch → render cycle
+ *   4. The "all" meta-source fetches sources in parallel and merges+sorts
+ *   5. renderCard() builds the newsletter-style card HTML from each article
+ *   6. updateSidebar() populates the right sidebar stats + headlines
+ *   7. Auto-refresh every 5 minutes, with "new articles" toast notification
+ *
+ * Proxy chain (tried in order, first success wins):
+ *   1. rss2json.com     — best JSON API, but rate-limited
+ *   2. AllOrigins       — CORS proxy, parses raw XML client-side
+ *   3. RSSBridge public — open source relay
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+/** Auto-refresh interval in milliseconds (3 minutes — more frequent updates) */
+const AUTO_REFRESH_MS = 3 * 60 * 1000;
+
+/**
+ * RSS proxy chain — each is tried in order until one succeeds.
+ * Each entry: { buildUrl(feedUrl, count) → string, parse(json) → items[] }
+ */
+const RSS_PROXIES = [
+  {
+    name: 'rss2json',
+    buildUrl: (feed, count) =>
+      `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed)}&count=${count}`,
+    parse: (data) => {
+      if (data.status !== 'ok') throw new Error('rss2json: ' + data.message);
+      return data.items || [];
+    }
+  },
+  {
+    name: 'allorigins',
+    buildUrl: (feed) =>
+      `https://api.allorigins.win/get?url=${encodeURIComponent(feed)}`,
+    parse: (data) => {
+      /* allorigins returns raw XML inside data.contents — parse it ourselves */
+      const xml = new DOMParser().parseFromString(data.contents, 'text/xml');
+      return parseRSSXML(xml);
+    }
+  },
+  {
+    name: 'corsproxy.io',
+    buildUrl: (feed) =>
+      `https://corsproxy.io/?${encodeURIComponent(feed)}`,
+    parseRaw: true,   /* expects raw XML response, not JSON */
+    parse: (text) => {
+      const xml = new DOMParser().parseFromString(text, 'text/xml');
+      return parseRSSXML(xml);
+    }
+  },
+  {
+    name: 'thingproxy',
+    buildUrl: (feed) =>
+      `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(feed)}`,
+    parseRaw: true,
+    parse: (text) => {
+      const xml = new DOMParser().parseFromString(text, 'text/xml');
+      return parseRSSXML(xml);
+    }
+  }
+];
+
+/**
+ * Parses a raw RSS/Atom XML Document into the normalised item shape
+ * that the rest of the app expects (same shape as rss2json items).
+ *
+ * @param {Document} xml
+ * @returns {Object[]}
+ */
+function parseRSSXML(xml) {
+  const items = [];
+  /* Try RSS 2.0 <item> first, then Atom <entry> */
+  const nodes = xml.querySelectorAll('item, entry');
+  nodes.forEach(node => {
+    /* Helper: get text content of a tag, trying namespaced variants */
+    const get = (tag) => node.querySelector(tag)?.textContent?.trim() || '';
+    const getAttr = (tag, attr) => node.querySelector(tag)?.getAttribute(attr) || '';
+
+    /* Title — decode HTML entities that may appear in CDATA titles */
+    let title = get('title');
+    if (title) {
+      const tmp = document.createElement('textarea');
+      tmp.innerHTML = title;
+      title = tmp.value;
+    }
+
+    /* Thumbnail: try every known image location in RSS/Atom feeds */
+    let thumbnail = '';
+    /* 1. media:content url= attribute */
+    const mediaContent = node.querySelector('content') || node.querySelector('[medium="image"]');
+    if (mediaContent) thumbnail = mediaContent.getAttribute('url') || '';
+    /* 2. media:thumbnail */
+    if (!thumbnail) thumbnail = getAttr('thumbnail', 'url');
+    /* 3. enclosure (podcasts / some news feeds) */
+    if (!thumbnail) {
+      const enc = node.querySelector('enclosure');
+      if (enc && (enc.getAttribute('type') || '').startsWith('image')) {
+        thumbnail = enc.getAttribute('url') || '';
+      }
+    }
+    /* 4. itunes:image */
+    if (!thumbnail) thumbnail = getAttr('image', 'href');
+    /* 5. First <img> found anywhere in description, summary, or content */
+    const descHtml = get('description') || get('summary') || get('content');
+    if (!thumbnail) {
+      const m = descHtml.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (m && m[1].startsWith('http')) thumbnail = m[1];
+    }
+    /* 6. og:image style meta sometimes in content:encoded */
+    const contentEncoded = get('encoded') || '';
+    if (!thumbnail) {
+      const m = contentEncoded.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (m && m[1].startsWith('http')) thumbnail = m[1];
+    }
+
+    items.push({
+      title,
+      link:        get('link') || getAttr('link', 'href'),
+      pubDate:     get('pubDate') || get('published') || get('updated'),
+      author:      get('creator') || get('author name') || get('author') || '',
+      thumbnail:   thumbnail.startsWith('http') ? thumbnail : '',
+      description: descHtml,
+      content:     contentEncoded || descHtml,
+    });
+  });
+  return items;
+}
+
+/**
+ * SOURCES — all Albanian news channels.
+ *
+ * Each entry:
+ *   name    : display name
+ *   feed    : RSS feed URL (public, no auth)
+ *   color   : brand accent colour used in UI
+ *   icon    : emoji / short text icon
+ *   desc    : sidebar description
+ *   count   : how many items to request
+ *   category: tag shown on cards
+ */
+const SOURCES = {
+
+  /* ── General News ──────────────────────────────────────────────────── */
+  news24: {
+    name: 'News24 Albania', feed: 'https://news24.al/feed',
+    color: '#2288ee', icon: '📰', count: 12,
+    desc: 'Lajmet e fundit — 24 orë raportim',
+    category: 'lajme', group: 'general'
+  },
+  ora: {
+    name: 'Ora News', feed: 'https://oranews.tv/feed',
+    color: '#dd8822', icon: '🕐', count: 10,
+    desc: 'Ora News — debat, analizë politike',
+    category: 'tv', group: 'general'
+  },
+  shqiptarja: {
+    name: 'Shqiptarja.com', feed: 'https://shqiptarja.com/rss',
+    color: '#cc3366', icon: '✍️', count: 12,
+    desc: 'Gazetari e pavarur shqiptare',
+    category: 'investigim', group: 'general'
+  },
+  shekulli: {
+    name: 'Shekulli', feed: 'https://shekulli.com.al/feed',
+    color: '#8844ee', icon: '📖', count: 10,
+    desc: 'Gazeta Shekulli — politikë, ekonomi',
+    category: 'gazetë', group: 'general'
+  },
+  lajme: {
+    name: 'Lajme.al', feed: 'https://lajme.al/feed',
+    color: '#ee4444', icon: '⚡', count: 10,
+    desc: 'Lajme të menjëhershme',
+    category: 'breaking', group: 'general'
+  },
+  panorama: {
+    name: 'Panorama', feed: 'https://www.panorama.com.al/feed/',
+    color: '#e07020', icon: '🗞', count: 10,
+    desc: 'Gazeta Panorama — lajme, politikë',
+    category: 'gazetë', group: 'general'
+  },
+  gazeta_shqip: {
+    name: 'Gazeta Shqip', feed: 'https://www.gazetashqip.com/feed/',
+    color: '#c0392b', icon: '📄', count: 10,
+    desc: 'Gazeta Shqip — lajme kombëtare',
+    category: 'gazetë', group: 'general'
+  },
+  tema: {
+    name: 'Gazeta Tema', feed: 'https://gazetatema.net/feed/',
+    color: '#1a7abf', icon: '📋', count: 10,
+    desc: 'Tema — opinion dhe investigim',
+    category: 'opinion', group: 'general'
+  },
+  Reporter: {
+    name: 'Reporter.al', feed: 'https://reporter.al/feed/',
+    color: '#27ae60', icon: '🔎', count: 10,
+    desc: 'Gazetari investigative',
+    category: 'investigim', group: 'general'
+  },
+  exit: {
+    name: 'Exit News', feed: 'https://exit.al/feed/',
+    color: '#9b59b6', icon: '🌐', count: 10,
+    desc: 'Lajme shqiptare në anglisht',
+    category: 'english', group: 'general'
+  },
+  top_channel: {
+    name: 'Top Channel', feed: 'https://top-channel.tv/feed/',
+    color: '#e74c3c', icon: '📡', count: 10,
+    desc: 'Top Channel TV — lajme kryesore',
+    category: 'tv', group: 'tv'
+  },
+  abcnews_al: {
+    name: 'ABC News Albania', feed: 'https://abcnews.al/feed/',
+    color: '#3498db', icon: '🅰', count: 10,
+    desc: 'ABC News Albania',
+    category: 'lajme', group: 'general'
+  },
+  syri: {
+    name: 'Syri.net', feed: 'https://www.syri.net/rss',
+    color: '#16a085', icon: '👁', count: 10,
+    desc: 'Syri.net — lajme dhe komente',
+    category: 'lajme', group: 'general'
+  },
+  dosja: {
+    name: 'Dosja.al', feed: 'https://dosja.al/feed/',
+    color: '#d35400', icon: '📂', count: 10,
+    desc: 'Dosja — investigim dhe çështje ligjore',
+    category: 'investigim', group: 'general'
+  },
+  bota: {
+    name: 'Bota.al', feed: 'https://bota.al/feed',
+    color: '#aa8833', icon: '🌍', count: 8,
+    desc: 'Kulturë, histori, diaspora shqiptare',
+    category: 'kulturë', group: 'general'
+  },
+
+  /* ── TV Channels ───────────────────────────────────────────────────── */
+  vizion: {
+    name: 'Vizion Plus', feed: 'https://www.vizionplus.tv/feed/',
+    color: '#22cc88', icon: '📺', count: 10,
+    desc: 'Lajme, sport, biznes nga Vizion Plus TV',
+    category: 'tv', group: 'tv'
+  },
+  klan: {
+    name: 'TV Klan', feed: 'https://www.tvklan.al/feed/',
+    color: '#e91e63', icon: '📺', count: 10,
+    desc: 'TV Klan — lajme, emisione, sport',
+    category: 'tv', group: 'tv'
+  },
+  scan: {
+    name: 'Scan TV', feed: 'https://www.scan-tv.com/feed/',
+    color: '#22aacc', icon: '📊', count: 8,
+    desc: 'Ekonomia — vetëm Scan TV',
+    category: 'ekonomi', group: 'tv'
+  },
+  A2CNN: {
+    name: 'A2 CNN Albania', feed: 'https://a2cnn.al/feed/',
+    color: '#cc0000', icon: '🎙', count: 10,
+    desc: 'A2 CNN — lajme, debate, politikë',
+    category: 'tv', group: 'tv'
+  },
+
+  /* ── RTSH — Radio Televizioni Shqiptar ─────────────────────────────── */
+  rtsh: {
+    name: 'RTSH Lajme', feed: 'https://www.rtsh.al/feed/',
+    color: '#d4a820', icon: '🏛', count: 12,
+    desc: 'Radiotelevisioni Shqiptar — lajme zyrtare',
+    category: 'publik', group: 'rtsh'
+  },
+  rtsh_sport: {
+    name: 'RTSH Sport', feed: 'https://www.rtsh.al/category/sport/feed/',
+    color: '#f39c12', icon: '⚽', count: 10,
+    desc: 'RTSH — sport kombëtar dhe ndërkombëtar',
+    category: 'sport', group: 'rtsh'
+  },
+  rtsh_kulture: {
+    name: 'RTSH Kulturë', feed: 'https://www.rtsh.al/category/kulture/feed/',
+    color: '#e8b84b', icon: '🎭', count: 8,
+    desc: 'RTSH — kulturë, arte, trashëgimi',
+    category: 'kulturë', group: 'rtsh'
+  },
+  rtsh_ekonomi: {
+    name: 'RTSH Ekonomi', feed: 'https://www.rtsh.al/category/ekonomi/feed/',
+    color: '#c9a227', icon: '💹', count: 8,
+    desc: 'RTSH — ekonomi dhe biznes',
+    category: 'ekonomi', group: 'rtsh'
+  },
+
+  /* ── Specialised / Niche ───────────────────────────────────────────── */
+  telegrafi: {
+    name: 'Telegrafi', feed: 'https://telegrafi.com/feed/',
+    color: '#2980b9', icon: '📡', count: 10,
+    desc: 'Telegrafi — lajme nga Kosova dhe rajoni',
+    category: 'kosovë', group: 'specialised'
+  },
+  kallxo: {
+    name: 'Kallxo (Kosovë)', feed: 'https://kallxo.com/feed/',
+    color: '#8e44ad', icon: '🔬', count: 8,
+    desc: 'Gazetari investigative nga Kosova',
+    category: 'investigim', group: 'specialised'
+  },
+  koha: {
+    name: 'Koha.net', feed: 'https://www.koha.net/feed/',
+    color: '#e67e22', icon: '🗞', count: 10,
+    desc: 'Koha.net — lajme nga Kosova',
+    category: 'kosovë', group: 'specialised'
+  },
+  zeri: {
+    name: 'Zëri', feed: 'https://zeri.info/feed/',
+    color: '#c0392b', icon: '📰', count: 10,
+    desc: 'Zëri — lajme dhe analizë nga Kosova',
+    category: 'kosovë', group: 'specialised'
+  },
+  sport_shqiperi: {
+    name: 'Sport Shqipëri', feed: 'https://sportshqiperi.com/feed/',
+    color: '#27ae60', icon: '⚽', count: 10,
+    desc: 'Sport kombëtar — futboll, basketboll',
+    category: 'sport', group: 'specialised'
+  },
+  supersport_al: {
+    name: 'SuperSport Al', feed: 'https://supersport.al/feed/',
+    color: '#1a9e3f', icon: '🏆', count: 10,
+    desc: 'Lajme sportive — futboll shqiptar dhe ndërkombëtar',
+    category: 'sport', group: 'specialised'
+  },
+  ekonomia_online: {
+    name: 'Ekonomia Online', feed: 'https://ekonomiaonline.com/feed/',
+    color: '#1abc9c', icon: '💰', count: 8,
+    desc: 'Lajme ekonomike dhe financiare',
+    category: 'ekonomi', group: 'specialised'
+  },
+  monitor: {
+    name: 'Monitor', feed: 'https://www.monitor.al/feed/',
+    color: '#16a085', icon: '📈', count: 8,
+    desc: 'Monitor — ekonomi, biznes, financa',
+    category: 'ekonomi', group: 'specialised'
+  },
+  fashionblog_al: {
+    name: 'Balkan Insight', feed: 'https://balkaninsight.com/feed/',
+    color: '#7f8c8d', icon: '🌍', count: 8,
+    desc: 'Balkan Insight — raportim rajonal anglisht',
+    category: 'english', group: 'specialised'
+  },
+};
+
+/**
+ * For the "all" meta-channel, fetch from the most active general + TV sources
+ */
+const ALL_SOURCES = ['news24', 'ora', 'shqiptarja', 'vizion', 'top_channel', 'rtsh', 'klan'];
+
+/** Source groups for sidebar sections */
+const SOURCE_GROUPS = {
+  general:     { label: 'Lajme të Përgjithshme', color: '#e8402a' },
+  tv:          { label: 'Kanale TV',              color: '#22cc88' },
+  rtsh:        { label: 'RTSH — Publik',          color: '#d4a820' },
+  specialised: { label: 'Specialised',            color: '#8844ee' },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let activeKey    = 'all';   /* currently displayed source key    */
+let currentItems = [];      /* items currently shown in feed      */
+let viewMode     = 'grid';  /* 'grid' | 'list'                    */
+let cachedFeeds  = {};      /* { [key]: items[] } — avoid re-fetch */
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const feedEl      = document.getElementById('feed');
+const tbName      = document.getElementById('tb-name');
+const tbDesc      = document.getElementById('tb-desc');
+const tbIcon      = document.getElementById('tb-icon');
+const tbCount     = document.getElementById('tb-count');
+const rsbSources  = document.getElementById('rsb-sources');
+const rsbHeadlines= document.getElementById('rsb-headlines');
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+/**
+ * Formats a date string (RSS pubDate) into a short relative label.
+ * Falls back gracefully on bad date strings.
+ *
+ * @param {string} dateStr - pubDate from RSS, e.g. "2025-03-09 10:30:00"
+ * @returns {string} — e.g. "14m", "3h", "2d"
+ */
+function fmtDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr.slice(0, 10);
+  const delta = Math.floor((Date.now() - d) / 1000);
+  if (delta < 60)    return `${delta}s`;
+  if (delta < 3600)  return `${Math.floor(delta/60)}m`;
+  if (delta < 86400) return `${Math.floor(delta/3600)}h`;
+  return `${Math.floor(delta/86400)}d`;
+}
+
+/**
+ * Strips HTML tags from description content.
+ * RSS descriptions often contain markup that needs cleaning for plain text.
+ *
+ * @param {string} html - raw description possibly containing HTML
+ * @returns {string} - plain text, truncated sensibly
+ */
+function stripHtml(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Attempts to extract a thumbnail from various RSS item fields.
+ * rss2json.com normalises some thumbnails, but many AL news sites
+ * embed images in <content:encoded> or <media:content>.
+ *
+ * @param {Object} item - rss2json item
+ * @returns {string|null} image URL or null
+ */
+function extractImage(item) {
+  /* rss2json puts normalised thumbnail here */
+  if (item.thumbnail && item.thumbnail.startsWith('http')) return item.thumbnail;
+  /* Sometimes in the content HTML */
+  if (item.content) {
+    const m = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m) return m[1];
+  }
+  /* Sometimes in the description HTML */
+  if (item.description) {
+    const m = item.description.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// ── Skeleton loading ──────────────────────────────────────────────────────────
+
+/**
+ * Fills the feed with skeleton placeholder cards during data fetch.
+ * @param {number} n - number of skeletons
+ */
+function showSkeletons(n = 6) {
+  feedEl.className = viewMode === 'list' ? 'view-list' : 'view-grid';
+  feedEl.innerHTML = Array(n).fill(0).map(() => `
+    <div class="skel-card">
+      <div class="skel sk-img"></div>
+      <div class="sk-body">
+        <div class="skel sk-a"></div>
+        <div class="skel sk-b"></div>
+        <div class="skel sk-c"></div>
+        <div class="skel sk-d"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Card rendering ────────────────────────────────────────────────────────────
+
+/**
+ * Renders one RSS item as a styled news card HTML string.
+ *
+ * @param {Object} item    - rss2json item object
+ * @param {string} srcKey  - source key (e.g. 'news24') for branding
+ * @returns {string} HTML string
+ */
+function renderCard(item, srcKey) {
+  const src     = SOURCES[srcKey] || {};
+  const title   = item.title   || '(pa titull)';
+  const link    = item.link    || '#';
+  const desc    = stripHtml(item.description || item.content || '');
+  const author  = item.author  || src.name || '';
+  const date    = fmtDate(item.pubDate);
+  const img     = extractImage(item);
+  const color   = src.color || '#e8402a';
+  const cat     = src.category || 'lajme';
+
+  /* Image — wrapped in aspect-ratio container so it's never a thin sliver */
+  const imgHtml = img
+    ? `<div class="card-img-wrap"><img class="card-img" src="${img}" alt="" loading="lazy" onerror="this.parentElement.outerHTML='<div class=card-img-placeholder>🗞</div>'" /></div>`
+    : `<div class="card-img-placeholder">🗞</div>`;
+
+  return `
+    <article class="news-card" onclick="window.open('${link}','_blank')">
+      ${imgHtml}
+
+      <div class="card-source-bar">
+        <span class="card-source-dot" style="background:${color};box-shadow:0 0 5px ${color}44;"></span>
+        <span class="card-source-name" style="color:${color};">${src.name || srcKey}</span>
+        <span class="card-date">${date} · ${cat}</span>
+      </div>
+
+      <div class="card-body">
+        <div class="card-title">${title}</div>
+        ${desc ? `<div class="card-desc">${desc.slice(0, 180)}${desc.length>180?'…':''}</div>` : ''}
+      </div>
+
+      <div class="card-footer">
+        <span class="card-author">${author ? '✍ ' + author : ''}</span>
+        <span class="card-link-btn" onclick="event.stopPropagation();window.open('${link}','_blank')">LEXO ↗</span>
+      </div>
+    </article>
+  `;
+}
+
+// ── Sidebar updater ───────────────────────────────────────────────────────────
+
+/**
+ * Rebuilds the right sidebar with:
+ *   - source breakdown (count per source)
+ *   - top headline list (first 6 titles)
+ *
+ * @param {Array} items  - all loaded items
+ * @param {string} key   - active source key
+ */
+function updateSidebar(items, key) {
+  /* -- Source breakdown -- */
+  if (key === 'all') {
+    /* Count how many items came from each source */
+    const counts = {};
+    items.forEach(it => {
+      const k = it._source || 'other';
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    rsbSources.innerHTML = Object.entries(counts).map(([k, n]) => {
+      const s = SOURCES[k] || {};
+      return `
+        <div class="src-stat">
+          <span class="src-stat-dot" style="background:${s.color||'#888'};"></span>
+          <span class="src-stat-name">${s.name || k}</span>
+          <span class="src-stat-num">${n}</span>
+        </div>
+      `;
+    }).join('');
+  } else {
+    const s = SOURCES[key] || {};
+    rsbSources.innerHTML = `
+      <div class="src-stat">
+        <span class="src-stat-dot" style="background:${s.color||'#888'};"></span>
+        <span class="src-stat-name">${s.name || key}</span>
+        <span class="src-stat-num">${items.length}</span>
+      </div>
+      <div style="font-size:10px;color:var(--t3);margin-top:6px;line-height:1.5;">${s.desc||''}</div>
+    `;
+  }
+
+  /* -- Top headlines list -- */
+  const headlineItems = [...items].slice(0, 6);
+  rsbHeadlines.innerHTML = headlineItems.map(it => {
+    const s = SOURCES[it._source || key] || {};
+    return `
+      <div class="headline-item" onclick="window.open('${it.link}','_blank')">
+        <div class="hl-source" style="color:${s.color||'var(--t3)'};">${s.name || it._source || key}</div>
+        <div class="hl-title">${(it.title||'').slice(0, 70)}${(it.title||'').length>70?'…':''}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Data fetching ─────────────────────────────────────────────────────────────
+
+/**
+ * Fetches and parses a single RSS feed, trying each proxy in RSS_PROXIES
+ * until one succeeds. This makes the app resilient to any single proxy
+ * going down or rate-limiting.
+ *
+ * @param {string} key - source key in SOURCES
+ * @returns {Promise<Object[]>} array of enriched item objects
+ */
+async function fetchFeed(key) {
+  const src = SOURCES[key];
+  if (!src) return [];
+
+  const count = src.count || 10;
+  const errors = [];
+
+  for (const proxy of RSS_PROXIES) {
+    try {
+      const url = proxy.buildUrl(src.feed, count);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      let res;
+      try {
+        res = await fetch(url, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      let items;
+      if (proxy.parseRaw) {
+        const text = await res.text();
+        items = proxy.parse(text);
+      } else {
+        const data = await res.json();
+        items = proxy.parse(data);
+      }
+
+      if (!items || items.length === 0) throw new Error('empty response');
+
+      console.log(`[LAJME] ${key} loaded via ${proxy.name} (${items.length} items)`);
+
+      /* Tag each item with source key for multi-feed labelling */
+      return items.slice(0, count).map(item => ({ ...item, _source: key }));
+
+    } catch (err) {
+      console.warn(`[LAJME] ${proxy.name} failed for ${key}:`, err.message);
+      errors.push(`${proxy.name}: ${err.message}`);
+    }
+  }
+
+  /* All proxies failed */
+  console.error(`[LAJME] All proxies failed for ${key}:`, errors);
+  return [];
+}
+
+// ── Source switching ──────────────────────────────────────────────────────────
+
+/**
+ * loadSource — core function.
+ * Shows skeletons → fetches data → renders cards → updates sidebar.
+ *
+ * For key='all': fetches ALL_SOURCES in parallel and merges + date-sorts.
+ * For a specific key: fetches just that source.
+ *
+ * @param {string} key - source key to load
+ */
+async function loadSource(key) {
+  activeKey = key;
+  showSkeletons(key === 'all' ? 9 : SOURCES[key]?.count || 8);
+  tbCount.textContent = '…';
+
+  /* Update topbar */
+  if (key === 'all') {
+    tbIcon.textContent = '🇦🇱';
+    tbName.textContent = 'të gjitha lajmet';
+    tbDesc.textContent = 'Lajmet kryesore nga të gjitha burimet shqiptare';
+  } else {
+    const s = SOURCES[key];
+    tbIcon.textContent = s.icon;
+    tbName.textContent = s.name;
+    tbDesc.textContent = s.desc;
+  }
+
+  try {
+    let items;
+
+    if (key === 'all') {
+      /* Fetch all sources simultaneously, merge, sort newest-first */
+      const results = await Promise.allSettled(
+        ALL_SOURCES.map(k => fetchFeed(k))
+      );
+      items = results
+        .filter(r => r.status === 'fulfilled')
+        .flatMap(r => r.value);
+
+      /* Sort by pubDate descending (newest first) */
+      items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+    } else {
+      /* Use cache only if it's less than 5 minutes old */
+      const cached = cachedFeeds[key];
+      const cacheAge = cached ? (Date.now() - cached.ts) : Infinity;
+      if (cached && cacheAge < 5 * 60 * 1000) {
+        items = cached.items;
+      } else {
+        items = await fetchFeed(key);
+        cachedFeeds[key] = { items, ts: Date.now() };
+      }
+      
+      /* Sort by pubDate descending (newest first) — same as "all" source */
+      items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    }
+
+    currentItems = items;
+
+    if (!items.length) {
+      const s = SOURCES[key] || {};
+      const siteLink = s.feed ? s.feed.replace(/\/feed\/?.*$/, '') : '#';
+      feedEl.innerHTML = `
+        <div class="state-box">
+          <span class="state-icon">📭</span>
+          <span class="state-title">ASNJË LAJM</span>
+          <span class="state-sub">RSS i këtij burimi nuk është i arritshëm nëpërmjet proxy-ve.<br/>Mund të vizitoni faqen direkt:</span>
+          <a href="${siteLink}" target="_blank" class="retry-btn" style="text-decoration:none;margin-top:8px;">🌐 HAPE FAQEN ↗</a>
+          <button class="retry-btn" onclick="delete cachedFeeds['${key}'];loadSource('${key}')">↺ PROVO SËRISHT</button>
+        </div>
+      `;
+      tbCount.textContent = '0';
+      return;
+    }
+
+    /* Render the feed */
+    const sep  = new Date().toLocaleDateString('sq-AL', { weekday:'long', day:'numeric', month:'long' }).toUpperCase();
+    feedEl.innerHTML =
+      `<div class="feed-sep">${sep}</div>` +
+      items.map(it => renderCard(it, it._source || key)).join('');
+    feedEl.scrollTop = 0;
+    tbCount.textContent = items.length;
+
+    /* Update per-source badge counts */
+    if (key === 'all') {
+      const bAll = document.getElementById('badge-all');
+      if (bAll) { bAll.textContent = items.length; bAll.classList.remove('loading'); }
+    } else {
+      const b = document.getElementById(`badge-${key}`);
+      if (b) { b.textContent = items.length; b.classList.remove('loading'); }
+    }
+
+    updateSidebar(items, key);
+
+  } catch (err) {
+    console.error('[LAJME] fetch failed:', err);
+    feedEl.innerHTML = `
+      <div class="state-box">
+        <span class="state-icon">⚠</span>
+        <span class="state-title">LIDHJA DËSHTOI</span>
+        <span class="state-sub">Nuk u arrit të lidhet me burimin.<br/>Kontrolloni lidhjen dhe provoni sërisht.</span>
+        <button class="retry-btn" onclick="refreshFeed()">↺ PROVO SËRISHT</button>
+      </div>
+    `;
+    tbCount.textContent = 'ERR';
+  }
+}
+
+/**
+ * switchSource — called when a sidebar channel item is clicked.
+ * Updates active state classes and loads the new source.
+ *
+ * @param {HTMLElement} el - the clicked .ch element
+ */
+function switchSource(el) {
+  const key = el.dataset.key;
+  if (!key) return;
+
+  /* Update active class */
+  document.querySelectorAll('.ch').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+
+  loadSource(key);
+}
+
+/**
+ * setView — toggles between grid and list view.
+ * Stores preference in viewMode state.
+ *
+ * @param {'grid'|'list'} mode
+ */
+function setView(mode) {
+  viewMode = mode;
+  feedEl.className = mode === 'list' ? 'view-list' : 'view-grid';
+  document.getElementById('vt-grid').classList.toggle('active', mode === 'grid');
+  document.getElementById('vt-list').classList.toggle('active', mode === 'list');
+}
+
+/** Refreshes the currently active source (clears cache for it). */
+function refreshFeed() {
+  delete cachedFeeds[activeKey];
+  loadSource(activeKey);
+}
+
+/**
+ * Background prefetch — silently loads all source badge counts in the sidebar
+ * after the main channel has loaded, so the user sees live counts.
+ */
+async function prefetchBadges() {
+  for (const key of Object.keys(SOURCES)) {
+    if (key === activeKey) continue;
+    try {
+      const items = await fetchFeed(key);
+      cachedFeeds[key] = { items, ts: Date.now() };
+      const b = document.getElementById(`badge-${key}`);
+      if (b && items.length) {
+        b.textContent = items.length;
+        b.classList.remove('loading');
+      }
+      /* Small delay between requests to respect rate limit */
+      await new Promise(r => setTimeout(r, 800));
+    } catch { /* silently skip — badge stays at default */ }
+  }
+  /* After all badges are filled, sync counts to mobile drawer */
+  syncMobileDrawerBadges();
+}
+
+// ── Auto-refresh & new article notification ───────────────────────────────────
+
+/**
+ * Toast notification for new articles detected during background refresh.
+ * Appears at top of feed, auto-dismisses after 6s.
+ *
+ * @param {number} count - number of new articles found
+ */
+function showNewArticlesToast(count) {
+  const existing = document.getElementById('new-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'new-toast';
+  toast.innerHTML = `
+    <span style="color:var(--green);font-size:13px;">↑</span>
+    <span style="font-family:var(--fhead);font-weight:700;color:var(--t1);">${count} artikuj të rinj</span>
+    <span style="color:var(--t2);font-size:11px;">— kliko për të rifreskuar</span>
+    <button onclick="refreshFeed();this.parentElement.remove();" style="margin-left:auto;background:rgba(48,212,138,0.1);border:1px solid rgba(48,212,138,0.35);color:var(--green);font-family:var(--fhead);font-size:10px;letter-spacing:1.5px;padding:3px 10px;border-radius:4px;cursor:pointer;">RIFRESKO</button>
+    <button onclick="this.parentElement.remove();" style="background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:0 4px;">✕</button>
+  `;
+  toast.style.cssText = `
+    position:sticky;top:0;z-index:100;
+    display:flex;align-items:center;gap:10px;
+    padding:10px 16px;margin-bottom:14px;
+    background:rgba(14,18,28,0.97);
+    border:1px solid rgba(48,212,138,0.35);
+    border-radius:7px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.4), 0 0 0 1px rgba(48,212,138,0.1);
+    animation:fadein .3s ease;
+    font-size:12px;
+  `;
+
+  feedEl.insertAdjacentElement('afterbegin', toast);
+  setTimeout(() => toast?.remove(), 6000);
+}
+
+/**
+ * Background poll — silently fetches the active source and checks if
+ * there are articles newer than what's currently displayed.
+ * If yes, shows a toast prompting the user to refresh.
+ * Always bypasses cache to check for truly fresh content.
+ */
+async function backgroundPoll() {
+  if (!currentItems.length) return;
+
+  try {
+    const key = activeKey;
+    let freshItems;
+
+    if (key === 'all') {
+      const results = await Promise.allSettled(ALL_SOURCES.map(k => fetchFeed(k)));
+      freshItems = results
+        .filter(r => r.status === 'fulfilled')
+        .flatMap(r => r.value);
+      freshItems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    } else {
+      freshItems = await fetchFeed(key);
+      /* Sort individual sources by date too */
+      freshItems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    }
+
+    if (!freshItems.length) return;
+
+    /* Compare newest article dates */
+    const latestCurrent = new Date(currentItems[0]?.pubDate || 0);
+    const latestFresh   = new Date(freshItems[0]?.pubDate   || 0);
+
+    if (latestFresh > latestCurrent) {
+      /* Count how many items are genuinely new */
+      const newCount = freshItems.filter(
+        item => new Date(item.pubDate) > latestCurrent
+      ).length;
+
+      if (newCount > 0) {
+        /* Update cache with fresh data so next refresh is instant */
+        cachedFeeds[key] = { items: freshItems, ts: Date.now() };
+        showNewArticlesToast(newCount);
+      }
+    }
+  } catch (err) {
+    /* Background poll failures are silent — user experience unaffected */
+    console.warn('[LAJME] background poll error:', err);
+  }
+}
+
+/** Updates the auto-refresh countdown shown in the sidebar footer */
+function startRefreshTimer() {
+  const btn = document.getElementById('auto-refresh-btn');
+  const lbl = document.getElementById('ar-label');
+  const dot = btn?.querySelector('.ar-dot');
+  let secondsLeft = AUTO_REFRESH_MS / 1000;
+
+  dot?.classList.add('active');
+
+  const tick = () => {
+    const m = Math.floor(secondsLeft / 60);
+    const s = secondsLeft % 60;
+    if (lbl) lbl.textContent = `AUTO ${m}:${String(s).padStart(2,'0')}`;
+    secondsLeft--;
+    if (secondsLeft < 0) {
+      secondsLeft = AUTO_REFRESH_MS / 1000;
+      backgroundPoll();
+    }
+  };
+
+  tick();
+  return setInterval(tick, 1000);
+}
+
+/** Detect platform and set the topbar badge */
+function detectPlatform() {
+  const ua = navigator.userAgent || '';
+  const badge  = document.getElementById('platform-badge');
+  const icon   = document.getElementById('platform-icon');
+  const label  = document.getElementById('platform-label');
+  if (!badge) return;
+
+  const isAndroid = /android/i.test(ua);
+  const isIOS     = /iphone|ipad|ipod/i.test(ua);
+
+  if (isAndroid) {
+    badge.className = 'platform-badge android';
+    if (icon)  icon.textContent  = '🤖';
+    if (label) label.textContent = 'Versioni Android';
+  } else if (isIOS) {
+    badge.className = 'platform-badge ios';
+    if (icon)  icon.textContent  = '🍎';
+    if (label) label.textContent = 'Versioni iOS';
+  } else {
+    badge.className = 'platform-badge pc';
+    if (icon)  icon.textContent  = '🖥';
+    if (label) label.textContent = 'Versioni PC';
+  }
+}
+
+/** Flash the auto-refresh button when a manual refresh fires */
+const _origRefreshFeed = refreshFeed;
+function refreshFeed() {
+  const btn = document.getElementById('auto-refresh-btn');
+  if (btn) {
+    btn.classList.add('refreshing');
+    setTimeout(() => btn.classList.remove('refreshing'), 600);
+  }
+  _origRefreshFeed();
+}
+
+// ── Live TV ───────────────────────────────────────────────────────────────────
+
+/**
+ * Live stream sources.
+ * Strategy: try the channel's own website live player first (official, always on),
+ * fall back to YouTube channel live embed if the site fails to load.
+ */
+const LIVE_CHANNELS = {
+  vizion_live: {
+    name: 'Vizion Plus',
+    color: '#22cc88',
+    siteUrl: 'https://www.vizionplus.tv/livestream/',
+    youtubeChannelId: 'UCXZu85c9j8i_WDtip9hXZTQ',
+    desc: 'Lajme · Filma · Argëtim'
+  },
+  top_channel_live: {
+    name: 'Top Channel',
+    color: '#e74c3c',
+    siteUrl: 'https://top-channel.tv/live/',
+    youtubeChannelId: 'UCyny-dfYPbE-CjAkzkZqF8A',
+    desc: 'Lajme · Argëtim · 24/7'
+  },
+  klan_live: {
+    name: 'TV Klan',
+    color: '#e91e63',
+    siteUrl: 'https://tvklan.al/live/',
+    youtubeChannelId: null,
+    desc: 'Lajme · Sport · Shfaqje'
+  },
+  rtsh_live: {
+    name: 'RTSH 1',
+    color: '#d4a820',
+    siteUrl: 'https://www.rtsh.al/rtsh-live/',
+    youtubeChannelId: 'UCpiewjt_Bvzkebn6l1hwWOg',
+    desc: 'Televizioni Publik Shqiptar'
+  },
+  ora_live: {
+    name: 'Ora News',
+    color: '#dd8822',
+    siteUrl: 'https://oranews.tv/live',
+    youtubeChannelId: null,
+    desc: 'Lajme · Informacion 24/7'
+  },
+  news24_live: {
+    name: 'News24 Albania',
+    color: '#2288ee',
+    siteUrl: 'https://news24.al/live',
+    youtubeChannelId: null,
+    desc: 'Breaking News · 24 Orë'
+  },
+  a2cnn_live: {
+    name: 'A2 CNN Albania',
+    color: '#cc0000',
+    siteUrl: 'https://a2cnn.al/live',
+    youtubeChannelId: null,
+    desc: 'Lajme · Debate · Politikë'
+  },
+  abc_live: {
+    name: 'ABC News Albania',
+    color: '#3498db',
+    siteUrl: 'https://abcnews.al/live',
+    youtubeChannelId: null,
+    desc: 'ABC News — lajme dhe raportim'
+  },
+  euronews_al_live: {
+    name: 'Euronews Albania',
+    color: '#003399',
+    siteUrl: 'https://euronews.al/live/',
+    youtubeChannelId: null,
+    desc: 'Euronews — lajme ndërkombëtare shqip'
+  },
+};
+
+let currentLiveKey = null;
+
+function openLiveTV(key) {
+  currentLiveKey = key || 'vizion_live';
+  const ch = LIVE_CHANNELS[currentLiveKey];
+  if (!ch) return;
+
+  document.getElementById('live-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  // Update title
+  document.getElementById('live-ch-name').textContent = ch.name;
+  document.getElementById('live-ch-name').style.color = ch.color;
+
+  _loadLiveChannel(currentLiveKey);
+}
+
+/** Opens the current live channel's official site in a new tab — fallback for blocked iframes */
+function openLiveInNewTab() {
+  const ch = LIVE_CHANNELS[currentLiveKey];
+  if (ch) window.open(ch.siteUrl, '_blank');
+}
+
+function closeLiveTV() {
+  document.getElementById('live-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  // Clear iframe to stop video
+  const iframe = document.getElementById('live-iframe');
+  iframe.src = '';
+  currentLiveKey = null;
+  // Reset mobile nav
+  document.querySelectorAll('.mob-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mob-btn-feed')?.classList.add('active');
+}
+
+function switchLive(key, tabBtn, nameOverride) {
+  currentLiveKey = key;
+  const ch = LIVE_CHANNELS[key];
+  if (!ch) return;
+
+  // Update active tab
+  document.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
+  if (tabBtn) tabBtn.classList.add('active');
+
+  // Update active sidebar item
+  document.querySelectorAll('.live-side-item').forEach(i => i.classList.remove('active'));
+
+  // Update header name
+  const nameEl = document.getElementById('live-ch-name');
+  if (nameEl) { nameEl.textContent = nameOverride || ch.name; nameEl.style.color = ch.color; }
+
+  _loadLiveChannel(key);
+}
+
+function _loadLiveChannel(key) {
+  const ch = LIVE_CHANNELS[key];
+  if (!ch) return;
+
+  const iframe = document.getElementById('live-iframe');
+  const loading = document.getElementById('live-loading');
+
+  if (loading) loading.style.display = 'flex';
+  iframe.style.display = 'none';
+  iframe.src = '';
+
+  // Build YouTube fallback URL (null if channel has no YouTube)
+  const youtubeUrl = ch.youtubeChannelId
+    ? `https://www.youtube.com/embed/live_stream?channel=${ch.youtubeChannelId}&autoplay=1`
+    : null;
+
+  let didLoad = false;
+
+  const showIframe = () => {
+    if (loading) loading.style.display = 'none';
+    iframe.style.display = 'block';
+  };
+
+  const tryYoutube = () => {
+    if (!youtubeUrl) { showIframe(); return; }
+    iframe.onload = () => { didLoad = true; showIframe(); };
+    iframe.onerror = () => showIframe();
+    iframe.src = youtubeUrl;
+    setTimeout(() => { if (!didLoad) showIframe(); }, 8000);
+  };
+
+  // Try official site first
+  setTimeout(() => {
+    iframe.onload = () => {
+      didLoad = true;
+      showIframe();
+    };
+    iframe.onerror = () => {
+      if (!didLoad) tryYoutube();
+    };
+    iframe.src = ch.siteUrl;
+
+    // Only fall back to YouTube if the site genuinely didn't load
+    setTimeout(() => {
+      if (!didLoad) {
+        console.warn(`[LAJME] Site timed out for ${key}, trying YouTube`);
+        tryYoutube();
+      }
+    }, 6000);
+  }, 300);
+}
+
+// Close on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('live-overlay')?.classList.contains('open')) {
+    closeLiveTV();
+  }
+});
+
+// ── Mobile UI functions ───────────────────────────────────────────────────────
+
+const isMobile = () => window.innerWidth <= 680;
+
+/** Open the source drawer */
+function openDrawer() {
+  document.getElementById('mob-drawer').classList.add('open');
+  document.getElementById('mob-backdrop').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+  /* Sync badge counts from desktop badges into drawer */
+  syncMobileDrawerBadges();
+}
+
+/** Close the source drawer */
+function closeDrawer() {
+  document.getElementById('mob-drawer').classList.remove('open');
+  document.getElementById('mob-backdrop').classList.remove('visible');
+  document.body.style.overflow = '';
+  /* Un-highlight sources nav btn */
+  document.querySelectorAll('.mob-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mob-btn-feed')?.classList.add('active');
+}
+
+/**
+ * Switch source from the mobile drawer.
+ * Updates the drawer active state, topbar label, and loads the source.
+ */
+function mobSwitchSource(el, label, color) {
+  const key = el.dataset.key;
+  if (!key) return;
+
+  /* Update active in drawer */
+  document.querySelectorAll('#mob-drawer .ch').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+
+  /* Also sync desktop sidebar active state */
+  document.querySelectorAll('#sidebar .ch').forEach(c => c.classList.remove('active'));
+  const desktopEl = document.querySelector(`#sidebar .ch[data-key="${key}"]`);
+  if (desktopEl) desktopEl.classList.add('active');
+
+  /* Update mobile source button in topbar */
+  const dot = document.getElementById('mob-source-dot');
+  const lbl = document.getElementById('mob-source-label');
+  if (dot) { dot.style.background = color; dot.style.boxShadow = `0 0 5px ${color}`; }
+  if (lbl) lbl.textContent = label;
+
+  closeDrawer();
+  loadSource(key);
+}
+
+/** Bottom nav tab switching */
+function mobNav(tab, btn) {
+  document.querySelectorAll('.mob-nav-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+/** Flash the refresh button briefly */
+function mobNavFlash(btn) {
+  btn.classList.add('active');
+  setTimeout(() => btn.classList.remove('active'), 600);
+}
+
+/** Toggle grid/list view from mobile nav */
+function mobToggleView(btn) {
+  const icon  = document.getElementById('mob-view-icon');
+  const label = document.getElementById('mob-view-label');
+  if (viewMode === 'grid') {
+    setView('list');
+    if (icon)  icon.textContent  = '☰';
+    if (label) label.textContent = 'List';
+  } else {
+    setView('grid');
+    if (icon)  icon.textContent  = '⊞';
+    if (label) label.textContent = 'Grid';
+  }
+  document.querySelectorAll('.mob-nav-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  setTimeout(() => {
+    btn.classList.remove('active');
+    document.getElementById('mob-btn-feed')?.classList.add('active');
+  }, 400);
+}
+
+/* Sync mobile drawer badge counts from the desktop badges */
+function syncMobileDrawerBadges() {
+  if (!isMobile()) return;
+  document.querySelectorAll('#mob-drawer-scroll .ch-badge').forEach(b => {
+    const key = b.id.replace('mob-badge-', '');
+    const desktop = document.getElementById('badge-' + key);
+    if (desktop && !desktop.classList.contains('loading')) {
+      b.textContent = desktop.textContent;
+      b.classList.remove('loading');
+    }
+  });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+/** Entry point */
+(async function init() {
+  detectPlatform();
+  await loadSource('all');
+  prefetchBadges();
+  startRefreshTimer();
+})();
+</script>
+</body>
+</html>
